@@ -384,7 +384,7 @@ class NextTask(tk.Frame):
         lblu_routput_lbl = tk.Label(f_routput, text=f"Randomizer output:   ", bg="#D3D3D3", font=("Helvetica", 12))
         txt_routput = tk.Text(f_routput, height=1, spacing1=10, bg="#D3D3D3", font=("Lucida Console", 12), wrap="none")
         txt_routput.config(state=tk.DISABLED)
-        txt_routput.tag_configure("hold", foreground="rosybrown")
+        txt_routput.tag_configure("hold", foreground="blue")
         lbl_index = tk.Label(f_routput, text='', bg="#D3D3D3", anchor='w', font=("Lucida Console", 12))
         bt_left = tk.Button(f_routput, text="  <  ", command=lambda: move(-1))
         bt_right = tk.Button(f_routput, text="  >  ", command=lambda: move(1))
