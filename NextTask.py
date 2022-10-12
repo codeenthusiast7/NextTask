@@ -645,7 +645,7 @@ class NextTask(tk.Frame):
         bt_update = tk.Button(lf_c_btns, text="Update selected", command=update_record)
         bt_update.grid(row=0, column=0, pady=5, sticky='sew')
 
-        bt_add = tk.Button(lf_c_btns, text="Add record", command=add_record)
+        bt_add = tk.Button(lf_c_btns, text="Add task", command=add_record)
         bt_add.grid(row=0, column=1, pady=5, sticky='sew')
 
         bt_remove = tk.Button(lf_c_btns, text="Remove selected", command=remove_selected)
