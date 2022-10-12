@@ -118,7 +118,7 @@ class NextTask(tk.Frame):
             self.rm = self.rm.master
 
         if __name__ == "__main__":
-            # 20:menu hight, 31:upborder height(fullscreen is 8 less)
+            # 20:menu height, 31:upborder height(fullscreen is 8 less)
             self.rm.geometry(f"{w - 900}x{h - ctypes.windll.user32.GetSystemMetrics(4) - 20 - 200}+{-f_width}+0")
             self.rm.update_idletasks()
 
