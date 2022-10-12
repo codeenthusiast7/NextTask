@@ -2,6 +2,7 @@
 NextTask is a cool randomizer.
 
 #Intended use:
+
 This is for a specific type of people like me who enjoy reading books and solving exercises in a random direction while also keeping track of your progress and getting a sense of accomplisment by the end of the day. Reading a book from start to finish can be a very daunting way to tuckle a difficult science book for example while starting a random exercise and making a goal to finish it will make you learn many different topics from differents parts of the book in order to finish it. This way you learn things faster in a more fulfilling way.
 
 The randomizer adds a fun way to learn things because you will likely be learning entirely different things every time you roll the randomizer. It definitely helps me.
