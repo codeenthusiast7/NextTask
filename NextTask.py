@@ -10,11 +10,12 @@ import ctypes
 import sys
 import re
 
-patterns = [r"^([^.,]+)$", r"^ *(\d+) *$", r"^ *(0|1) *$",
-            r"(([^\s,[]+[^\s[]*(\s+[^\s[]+)*)\s*(\[\s*(-?\d+)\s*[-|,]\s*(-?\d+)\s*\]|"
-            r"\[\s*([a-zA-Z]+)\s*[-|,]\s*([a-zA-Z]+)\s*\]))"]
-pattern_import = r"([^.,]+), *(\d+) *, *(0|1)( *, *[^\n]+)*"
+patterns = [r"^([^.,\n]+)$", r"^\s*(\d+)\s*$", r"^\s*(0|1)\s*$",
+            r"(([^\s,[]+[^\s[]*(\s+[^\s[]+)*)\s*(\[\s*(-?\d+)\s*-\s*(-?\d+)\s*\]|"
+            r"\[\s*([a-zA-Z]+)\s*-\s*([a-zA-Z]+)\s*\]|\[([^.,\n-\/][^\n-]*)\]))"]
+pattern_import = r"([^.,\n]+),\s*(\d+)\s*,\s*(0|1)(\s*,\s*[^\n]+)*"
 pattern_duplic_name = r"^.+(\((\d+)\))$"
+pattern_sample = r"\s*([^.,\n\/]+)\s*(\/\s*(\d+))*"
 
 expl = ["Name: Characters other than '.' and ','.",
         "Weights: Any integer.\n\t\tEqual weights = equal propability to be picked.",
@@ -74,7 +75,7 @@ def strup(ns):
     return s
 
 
-def export_records(db):
+def export_tasks(db):
     text_file = tkfd.asksaveasfilename(title="Save File", defaultextension=".txt",
                                        filetypes=(("Text Files", "*.txt"),))
     if text_file:
@@ -82,15 +83,15 @@ def export_records(db):
             conn = sqlite3.connect(db)
             c = conn.cursor()
             if db == "tasks.db":
-                c.execute("SELECT * FROM records")
-                records = c.fetchall()
-                for record in records:
-                    f.write(f"{record[0]},{record[1]},{record[2]},{record[3]}\n")
+                c.execute("SELECT * FROM tasks")
+                tasks = c.fetchall()
+                for task in tasks:
+                    f.write(f"{task[0]},{task[1]},{task[2]},{task[3]}\n")
             elif db == "completed.db":
-                c.execute("SELECT * FROM records")
-                records = c.fetchall()
-                for record in records:
-                    f.write(f"{record[0]}\n")
+                c.execute("SELECT * FROM tasks")
+                tasks = c.fetchall()
+                for task in tasks:
+                    f.write(f"{task[0]}\n")
             conn.commit()
             conn.close()
 
@@ -108,8 +109,8 @@ class NextTask(tk.Frame):
         self.memory = None
         self.mem_output = []
         self.mem_index = 0
-        self.active_record = None
-        self.first_record = None
+        self.active_task = None
+        self.first_task = None
         self.score = 0
         self.focused = []
         self.held = []
@@ -172,7 +173,7 @@ class NextTask(tk.Frame):
         self.lbl_score_all = tk.Label(f_up, text=f"Completed: ", bg="rosybrown", relief="raised")
         self.lbl_score_all.pack(fill='both', side='left', expand=True)
 
-        bt_1 = tk.Button(f_up, text="Records Table", bg="#9C6F6F", activebackground="#9C6F6F", command=bt_call1)
+        bt_1 = tk.Button(f_up, text="Tasks Table", bg="#9C6F6F", activebackground="#9C6F6F", command=bt_call1)
         bt_1.pack(fill='both', side='left')
 
         bt_2 = tk.Button(f_up, text="Completed Tasks", bg="#9C6F6F", activebackground="#9C6F6F", fg="#505050",
@@ -242,51 +243,66 @@ class NextTask(tk.Frame):
         vsb0 = tk.Scrollbar(f_left, orient="vertical")
         hsb0 = tk.Scrollbar(f_left, orient="horizontal")
 
-        txt_main = tk.Text(f_left, relief=tk.GROOVE, wrap="none", bg='black', fg='MediumSeaGreen', borderwidth=5,
-                           insertbackground='white', font=('TkFixedFont', 9), xscrollcommand=hsb0.set,
-                           yscrollcommand=vsb0.set)
-        txt_main.grid(row=0, column=0, sticky='nsew')
+        self.txt_main = tk.Text(f_left, relief=tk.GROOVE, wrap="none", bg='black', fg='MediumSeaGreen', borderwidth=5,
+                                insertbackground='white', font=('TkFixedFont', 9), xscrollcommand=hsb0.set,
+                                yscrollcommand=vsb0.set)
+        self.txt_main.grid(row=0, column=0, sticky='nsew')
 
         vsb0.grid(row=0, column=1, sticky='nse')
         hsb0.grid(row=1, column=0, sticky='nsew')
 
-        vsb0.config(command=txt_main.yview)
-        hsb0.config(command=txt_main.xview)
+        vsb0.config(command=self.txt_main.yview)
+        hsb0.config(command=self.txt_main.xview)
 
         def r():
             if not self.memory:
                 return rt()
             output = self.memory[1]
             if self.bt_r["text"] == "roll lower":
-                for k, repet in enumerate(self.memory[4]):
-                    if repet[4]:
-                        if self.mem_output[k] == int(repet[4]):
-                            self.mem_output[k] = int(repet[5]) + 1
-                        self.mem_output[k] = random.randint(int(repet[4]), self.mem_output[k] - 1)
+                for k, group in enumerate(self.memory[4]):
+                    if group[4]:
+                        if self.mem_output[k] == int(group[4]):
+                            self.mem_output[k] = int(group[5]) + 1
+                        self.mem_output[k] = random.randint(int(group[4]), self.mem_output[k] - 1)
+                    elif group[6]:
+                        if self.mem_output[k] == group[6]:
+                            self.mem_output[k] = strup(addup(group[7]) + 1)
+                        self.mem_output[k] = strup(random.randint(addup(group[6]), addup(self.mem_output[k]) - 1))
                     else:
-                        if self.mem_output[k] == repet[6]:
-                            self.mem_output[k] = strup(addup(repet[7]) + 1)
-                        self.mem_output[k] = strup(random.randint(addup(repet[6]), addup(self.mem_output[k]) - 1))
-                    output += f", {repet[1]}: {self.mem_output[k]}"
+                        reg = re.findall(pattern_sample, group[8])
+                        temp = [x for x in [repet[0] for repet in reg] if x != self.mem_output[k]]
+                        if temp:
+                            we = random.choices(temp, weights=[int(repet[2]) if repet[2] else 1 for repet in reg])[0]
+                            self.mem_output[k] = we
+                    output += f", {group[1]}: {self.mem_output[k]}"
             else:
-                for k, repet in enumerate(self.memory[4]):
-                    if repet[4]:
-                        s = random.randint(int(repet[4]), int(repet[5]))
-                        while s == self.mem_output[k] and int(repet[4]) != int(repet[4]):
-                            s = random.randint(int(repet[4]), int(repet[5]))
+                for k, group in enumerate(self.memory[4]):
+                    if group[4]:
+                        s = random.randint(int(group[4]), int(group[5]))
+                        if int(group[4]) != int(group[5]):
+                            while s == self.mem_output[k]:
+                                s = random.randint(int(group[4]), int(group[5]))
                         self.mem_output[k] = s
-                    else:
-                        qw = strup(random.randint(addup(repet[6]), addup(repet[7])))
-                        while qw == self.mem_output[k] and repet[6] != repet[7]:
-                            qw = strup(random.randint(addup(repet[6]), addup(repet[7])))
+                    elif group[6]:
+                        qw = strup(random.randint(addup(group[6]), addup(group[7])))
+                        if group[6] != group[7]:
+                            while qw == self.mem_output[k]:
+                                qw = strup(random.randint(addup(group[6]), addup(group[7])))
                         self.mem_output[k] = qw
-                    output += f", {repet[1]}: {self.mem_output[k]}"
+                    else:
+                        reg = re.findall(pattern_sample, group[8])
+                        reg = [x for x in reg if x[0] != self.mem_output[k]]
+                        if reg:
+                            we = random.choices([repet[0] for repet in reg],
+                                                weights=[int(repet[2]) if repet[2] else 1 for repet in reg])[0]
+                            self.mem_output[k] = we
+                    output += f", {group[1]}: {self.mem_output[k]}"
             self.memory[6] = output
             for ctask in [': '.join(gramh.split(': ')[1:]) for gramh in self.txt_right.get('1.0', tk.END).split('\n')]:
                 if ctask == output:
                     output += " is already completed"
-            txt_main.see(tk.END)
-            txt_main.insert(tk.END, output + '\n')
+            self.txt_main.see(tk.END)
+            self.txt_main.insert(tk.END, output + '\n')
 
         def rr():
             if not self.memory:
@@ -294,19 +310,24 @@ class NextTask(tk.Frame):
             output = self.memory[1]
             if not self.mem_output:
                 self.mem_output.extend([0] * len(self.memory[4]))
-            for k, repet in enumerate(self.memory[4]):
+            for k, group in enumerate(self.memory[4]):
                 if k not in self.held:
-                    if repet[4]:
-                        self.mem_output[k] = random.randint(int(repet[4]), int(repet[5]))
+                    if group[4]:
+                        self.mem_output[k] = random.randint(int(group[4]), int(group[5]))
+                    elif group[6]:
+                        self.mem_output[k] = strup(random.randint(addup(group[6]), addup(group[7])))
                     else:
-                        self.mem_output[k] = strup(random.randint(addup(repet[6]), addup(repet[7])))
-                output += f", {repet[1]}: {self.mem_output[k]}"
+                        reg = re.findall(pattern_sample, group[8])
+                        self.mem_output[k] = random.choices([repet[0] for repet in reg],
+                                                            weights=[int(repet[2]) if repet[2] else 1 for repet in
+                                                                     reg])[0]
+                output += f", {group[1]}: {self.mem_output[k]}"
             self.memory[6] = output
             for ctask in [': '.join(gramh.split(': ')[1:]) for gramh in self.txt_right.get('1.0', tk.END).split('\n')]:
                 if ctask == output:
                     output += " is already completed"
-            txt_main.see(tk.END)
-            txt_main.insert(tk.END, output + '\n')
+            self.txt_main.see(tk.END)
+            self.txt_main.insert(tk.END, output + '\n')
 
         def rt():
             if len(self.tree_cl.get_children()) == 0:
@@ -316,7 +337,7 @@ class NextTask(tk.Frame):
                 if self.tree_cl.item(iid)['values'][3]:
                     temp.append([iid] + self.tree_cl.item(iid)['values'][1:3] + [self.tree_cl.item(iid)['values'][4]])
             if not temp:
-                return "All records are set to OFF"
+                return "All tasks are set to OFF"
             txt_routput.config(state=tk.NORMAL)
             txt_routput.delete('0.0', tk.END)
             self.memory = random.choices(temp, weights=[int(n) for n in np.array(temp)[:, 2].tolist()])[0]
@@ -338,8 +359,8 @@ class NextTask(tk.Frame):
                 return
             for ctask in [': '.join(gramh.split(': ')[1:]) for gramh in self.txt_right.get('1.0', tk.END).split('\n')]:
                 if ctask == self.memory[6]:
-                    txt_main.insert(tk.END, "Task is already completed" + '\n')
-                    txt_main.see(tk.END)
+                    self.txt_main.insert(tk.END, "Task is already completed" + '\n')
+                    self.txt_main.see(tk.END)
                     return
             self.score += 1
             lbl_score.config(text=f"Completed this session: {self.score}")
@@ -349,12 +370,12 @@ class NextTask(tk.Frame):
             self.txt_right.config(state=tk.DISABLED)
             conn = sqlite3.connect("completed.db")
             c = conn.cursor()
-            c.execute("INSERT INTO records VALUES (:task)", {"task": self.memory[6]})
+            c.execute("INSERT INTO tasks VALUES (:task)", {"task": self.memory[6]})
             conn.commit()
             conn.close()
-            txt_main.see(tk.END)
-            txt_main.insert(tk.END, "Completed!\n")
-            txt_main.see(tk.END)
+            self.txt_main.see(tk.END)
+            self.txt_main.insert(tk.END, "Completed!\n")
+            self.txt_main.see(tk.END)
 
         def move(n):
             if not self.memory:
@@ -400,11 +421,11 @@ class NextTask(tk.Frame):
         f_bot = tk.Frame(self)
         f_bot.grid(row=3, column=0, sticky='nsew')
 
-        self.bt_r = tk.Button(f_bot, text="roll lower", command=lambda: [r(), txt_main.see(tk.END)])
+        self.bt_r = tk.Button(f_bot, text="roll different", command=lambda: [r(), self.txt_main.see(tk.END)])
         bt_ddm = tk.Button(f_bot, text='^', command=lambda: minrev(bt_ddm, 'grid', f_li))
-        bt_rr = tk.Button(f_bot, text="roll randomizer", command=lambda: [rr(), txt_main.see(tk.END)])
-        bt_rt = tk.Button(f_bot, text="roll task", command=lambda: [rt(), txt_main.see(tk.END)])
-        bt_clear = tk.Button(f_bot, text="clear text", command=lambda: txt_main.delete('1.0', tk.END))
+        bt_rr = tk.Button(f_bot, text="roll randomizer", command=lambda: [rr(), self.txt_main.see(tk.END)])
+        bt_rt = tk.Button(f_bot, text="roll task", command=lambda: [rt(), self.txt_main.see(tk.END)])
+        bt_clear = tk.Button(f_bot, text="clear text", command=lambda: self.txt_main.delete('1.0', tk.END))
         bt_complete = tk.Button(f_bot, text='complete', command=complete)
         bt_edit = tk.Button(f_bot, text="Edit", command=lambda: minrev(bt_edit, "grid", *[lf_c, lf_c2, lf_c_btns]))
 
@@ -436,7 +457,7 @@ class NextTask(tk.Frame):
                 lbl.config(background="#D3D3D3")
                 self.focused.remove(entry)
 
-        lf_c = ttk.LabelFrame(self, text="Record")
+        lf_c = ttk.LabelFrame(self, text="Task")
         lf_c.grid(row=4, column=0, sticky='sew')
         lf_c.grid_remove()
 
@@ -467,12 +488,12 @@ class NextTask(tk.Frame):
         lbld_routput_lbl = tk.Label(lf_c2, text=f"Randomizer output:   ", bg="#D3D3D3", font=("Helvetica", 12))
         lbld_routput_lbl.pack(side='left', fill='both')
         lbld_routput_lbl.bind('<Button-1>', lambda event: focus_lbl(event, lbld_routput_lbl))
-        ent_routput = tk.Entry(lf_c2, font=("Helvetica", 12))
-        ent_routput.pack(side='left', fill='both', expand=True, padx=(0, 85))
+        self.ent_routput = tk.Entry(lf_c2, font=("Helvetica", 12))
+        self.ent_routput.pack(side='left', fill='both', expand=True, padx=(0, 85))
 
-        def update_record(_=None):
+        def update_task(_=None):
             if not self.tree_cl.selection():
-                txt_main.insert(tk.END, f"There is no task selected. Select a task in the task list.\n")
+                self.txt_main.insert(tk.END, f"There is no task selected. Select a task in the task table.\n")
                 return
             timh = ["name = :name", "weight = :weight", "onoff = :onoff", "sqlrandomizer = :sqlrandomizer"]
             change = []
@@ -485,55 +506,36 @@ class NextTask(tk.Frame):
                         entry.selection_range(0, tk.END)
                         return
                     change.append(timh[n])
-            if not self.focused or ent_routput in self.focused:
-                reg = re.findall(patterns[3], ent_routput.get())
-                if reg:
-                    rizer = []
-                    for repet in reg:
-                        if repet[4]:
-                            if repet[4] > repet[5]:
-                                txt_main.insert(tk.END, f"Skipped: {repet[0]}. Try: {repet[1]} ([{repet[5]}"
-                                                        f"-{repet[4]}])\n")
-                                continue
-                            rizer.append(f"{repet[1]} [{repet[4]}-{repet[5]}]")
-                        else:
-                            if addup(repet[6]) > addup(repet[7]):
-                                txt_main.insert(tk.END, f"Skipped: {repet[0]}. Try: {repet[1]} ([{repet[7]}"
-                                                        f"-{repet[6]}])\n")
-                                continue
-                            rizer.append(f"{repet[1]} [{repet[6]}-{repet[7]}]")
-                    rizer = ', '.join(rizer)
-                    ent_routput.delete('0', tk.END)
-                    ent_routput.insert('0', rizer)
-                else:
-                    tksd.messagebox.showerror("Error", "Unable to read input. At:\n" + expl[3])
-                    ent_routput.focus()
-                    ent_routput.selection_range(0, tk.END)
+            if not self.focused or self.ent_routput in self.focused:
+                rizer = self.pattern_check(self.ent_routput.get(), 2)
+                if not rizer:
                     return
                 change.append(timh[3])
+            else:
+                rizer = self.ent_routput.get()
             conn = sqlite3.connect("tasks.db")
             c = conn.cursor()
-            command = "UPDATE records SET %s WHERE rowid = :rowid" % ','.join(change)
-            for record in self.tree_cl.selection():
+            command = "UPDATE tasks SET %s WHERE rowid = :rowid" % ','.join(change)
+            for task in self.tree_cl.selection():
                 c.execute(command,
                           {
                               "name": ent_name.get(),
                               "weight": ent_wgt.get(),
                               "onoff": ent_onoff.get(),
-                              "sqlrandomizer": ent_routput.get(),
-                              "rowid": record
+                              "sqlrandomizer": rizer,
+                              "rowid": task
                           })
-            command = "SELECT rowid, * FROM records WHERE rowid in ({0})".format(
+            command = "SELECT rowid, * FROM tasks WHERE rowid in ({0})".format(
                 ', '.join('?' for _ in self.tree_cl.selection()))
             c.execute(command, self.tree_cl.selection())
-            records = c.fetchall()
+            tasks = c.fetchall()
             conn.commit()
             conn.close()
-            for record in records:
-                self.tree_cl.item(record[0], text='', values=(self.tree_cl.item(record[0])['values'][0], *record[1:]))
+            for task in tasks:
+                self.tree_cl.item(task[0], text='', values=(self.tree_cl.item(task[0])['values'][0], *task[1:]))
             self.focus()
 
-        def add_record():
+        def add_task():
             name = ent_name.get()
             for n, entry in enumerate([kid for kid in lf_c.winfo_children() if kid.winfo_class() == 'Entry']):
                 reg = re.match(patterns[n], entry.get())
@@ -558,53 +560,29 @@ class NextTask(tk.Frame):
                             m += 1
                             name = str(1 + m).join(name.rsplit(str(m), 1))
                         continue
-            rizer = "Random [1-1000]"
-            if ent_routput.get():
-                reg = re.findall(patterns[3], ent_routput.get())
-                if reg:
-                    rizer = []
-                    for repet in reg:
-                        if repet[4]:
-                            if repet[4] > repet[5]:
-                                txt_main.insert(tk.END, f"Skipped: {repet[0]}. Try: {repet[1]} ([{repet[5]}"
-                                                        f"-{repet[4]}])\n")
-                                continue
-                            rizer.append(f"{repet[1]} [{repet[4]}-{repet[5]}]")
-                        else:
-                            if addup(repet[6]) > addup(repet[7]):
-                                txt_main.insert(tk.END, f"Skipped: {repet[0]}. Try: {repet[1]} ([{repet[7]}"
-                                                        f"-{repet[6]}])\n")
-                                continue
-                            rizer.append(f"{repet[1]} [{repet[6]}-{repet[7]}]")
-                    rizer = ', '.join(rizer)
-                    ent_routput.delete('0', tk.END)
-                    ent_routput.insert('0', rizer)
-                else:
-                    tksd.messagebox.showerror("Error", f"Unable to read input. At:\n{expl[3]}\nUsing default instead")
-                    ent_onoff.focus()
-                    ent_onoff.selection_range(0, tk.END)
+            rizer = self.pattern_check(self.ent_routput.get(), 1)
             conn = sqlite3.connect("tasks.db")
             c = conn.cursor()
-            c.execute("INSERT INTO records VALUES (:name, :weight, :onoff, :sqlrandomizer)",
+            c.execute("INSERT INTO tasks VALUES (:name, :weight, :onoff, :sqlrandomizer)",
                       {
                           "name": name,
                           "weight": ent_wgt.get(),
                           "onoff": ent_onoff.get(),
                           "sqlrandomizer": rizer
                       })
-            c.execute("SELECT rowid, * FROM records")
+            c.execute("SELECT rowid, * FROM tasks")
             self.tree_cl.insert(parent='', index="end", iid=c.lastrowid, text='', values=(
                 len(c.fetchall()), name, ent_wgt.get(), ent_onoff.get(), rizer))
             conn.commit()
             conn.close()
 
         def remove_selected():
-            if self.tree_cl.selection() and tksd.messagebox.askyesno("Warning!", "Delete the selected records?"):
+            if self.tree_cl.selection() and tksd.messagebox.askyesno("Warning!", "Delete the selected tasks?"):
                 conn = sqlite3.connect("tasks.db")
                 c = conn.cursor()
-                c.executemany("DELETE from records WHERE rowid=?", [(record,) for record in self.tree_cl.selection()])
-                for record in self.tree_cl.selection():
-                    self.tree_cl.delete(record)
+                c.executemany("DELETE from tasks WHERE rowid=?", [(task,) for task in self.tree_cl.selection()])
+                for task in self.tree_cl.selection():
+                    self.tree_cl.delete(task)
                 conn.commit()
                 conn.close()
                 arithmise(self.tree_cl)
@@ -625,16 +603,16 @@ class NextTask(tk.Frame):
             ent_name.delete('0', tk.END)
             ent_wgt.delete('0', tk.END)
             ent_onoff.delete('0', tk.END)
-            ent_routput.delete('0', tk.END)
+            self.ent_routput.delete('0', tk.END)
 
-        def select_record(_):
+        def select_task(_):
             clear_entries()
-            values = self.tree_cl.item(self.active_record, 'values')
+            values = self.tree_cl.item(self.active_task, 'values')
             try:
                 ent_name.insert('0', values[1])
                 ent_wgt.insert('0', values[2])
                 ent_onoff.insert('0', values[3])
-                ent_routput.insert('0', values[4])
+                self.ent_routput.insert('0', values[4])
             except IndexError:
                 return
 
@@ -642,10 +620,10 @@ class NextTask(tk.Frame):
         lf_c_btns.grid(row=6, column=0, sticky='sew')
         lf_c_btns.grid_remove()
 
-        bt_update = tk.Button(lf_c_btns, text="Update selected", command=update_record)
+        bt_update = tk.Button(lf_c_btns, text="Update selected", command=update_task)
         bt_update.grid(row=0, column=0, pady=5, sticky='sew')
 
-        bt_add = tk.Button(lf_c_btns, text="Add task", command=add_record)
+        bt_add = tk.Button(lf_c_btns, text="Add task", command=add_task)
         bt_add.grid(row=0, column=1, pady=5, sticky='sew')
 
         bt_remove = tk.Button(lf_c_btns, text="Remove selected", command=remove_selected)
@@ -661,16 +639,16 @@ class NextTask(tk.Frame):
         bt_clear.grid(row=0, column=5, pady=5, sticky='sew')
 
         def motion(_):
-            record = self.tree_cl.identify_row(self.tree_cl.winfo_pointery() - self.tree_cl.winfo_rooty())
-            if not record or record == self.active_record:
+            task = self.tree_cl.identify_row(self.tree_cl.winfo_pointery() - self.tree_cl.winfo_rooty())
+            if not task or task == self.active_task:
                 return
-            if not self.first_record:
-                self.first_record = self.active_record = record
-                self.tree_cl.selection_toggle(record)
+            if not self.first_task:
+                self.first_task = self.active_task = task
+                self.tree_cl.selection_toggle(task)
                 return
-            a = self.tree_cl.index(self.first_record)
-            ac = self.tree_cl.index(self.active_record)
-            c = self.tree_cl.index(record)
+            a = self.tree_cl.index(self.first_task)
+            ac = self.tree_cl.index(self.active_task)
+            c = self.tree_cl.index(task)
             kids = self.tree_cl.get_children()
             if c > ac:
                 if c > a > ac:  # down from in to away
@@ -688,38 +666,38 @@ class NextTask(tk.Frame):
                     toggled = kids[c + 1:ac + 1]
             for n in toggled:
                 self.tree_cl.selection_toggle(n)
-            self.active_record = record
+            self.active_task = task
 
         def escape(_):
             self.tree_cl.selection_remove(self.tree_cl.selection())
 
         def click_press(_):
-            self.first_record = self.active_record = self.tree_cl.identify_row(
+            self.first_task = self.active_task = self.tree_cl.identify_row(
                 self.tree_cl.winfo_pointery() - self.tree_cl.winfo_rooty())
             self.tree_cl.bind('<Motion>', motion)
 
         def click_release(_):
             self.tree_cl.unbind('<Motion>')
-            self.first_record = None
-            if self.active_record:
-                select_record(_)
+            self.first_task = None
+            if self.active_task:
+                select_task(_)
             else:
                 escape(_)
 
         def double_click(_):  # focuses the entry when clicking a value in the treeview
             x, y = self.tree_cl.winfo_pointerxy()
-            self.active_record = self.tree_cl.identify_row(y - self.tree_cl.winfo_rooty())
-            if self.active_record:
+            self.active_task = self.tree_cl.identify_row(y - self.tree_cl.winfo_rooty())
+            if self.active_task:
                 column = self.tree_cl.identify_column(x - self.tree_cl.winfo_rootx())
                 entry_i = [child for child in lf_c.winfo_children() if child.winfo_class() == 'Entry'][
                     int(column.strip('#')) - 2]
                 entry_i.focus()
                 entry_i.selection_range(0, tk.END)
 
-        ent_name.bind('<Return>', update_record)
-        ent_wgt.bind('<Return>', update_record)
-        ent_onoff.bind('<Return>', update_record)
-        ent_routput.bind('<Return>', update_record)
+        ent_name.bind('<Return>', update_task)
+        ent_wgt.bind('<Return>', update_task)
+        ent_onoff.bind('<Return>', update_task)
+        self.ent_routput.bind('<Return>', update_task)
         self.tree_cl.bind('<Escape>', escape)
         self.tree_cl.bind('<Button-1>', click_press)
         self.tree_cl.bind('<Double-Button-1>', double_click)
@@ -728,7 +706,7 @@ class NextTask(tk.Frame):
         def create_databases():
             conn = sqlite3.connect("tasks.db")  # creates databases or connects to existing
             c = conn.cursor()  # creates cursor instance
-            c.execute("""CREATE TABLE if not exists records (
+            c.execute("""CREATE TABLE if not exists tasks (
                       name text,
                       weight integer, 
                       onoff integer,
@@ -739,7 +717,7 @@ class NextTask(tk.Frame):
 
             conn = sqlite3.connect("completed.db")
             c = conn.cursor()
-            c.execute("""CREATE TABLE if not exists records (
+            c.execute("""CREATE TABLE if not exists tasks (
                       task text)
                       """)
             conn.commit()
@@ -748,28 +726,28 @@ class NextTask(tk.Frame):
         def query_database():  # putting databases to view
             conn = sqlite3.connect("tasks.db")
             c = conn.cursor()
-            c.execute("SELECT rowid, * FROM records")  # rowid is the same as oid (object id)
-            records = c.fetchall()
+            c.execute("SELECT rowid, * FROM tasks")  # rowid is the same as oid (object id)
+            tasks = c.fetchall()
             conn.commit()
             conn.close()
-            for n, record in enumerate(records):  # note: you cant change treeview iid
-                if record[4] == '':
-                    self.tree_cl.insert(parent='', index="end", iid=record[0], text='', values=(
-                        n + 1, record[1], record[2], record[3], "Random [1-1000]"))
-                    txt_main.insert(tk.END, f"Task {record[1]} has no saved randomizer. Default selected\n")
-                    txt_main.see(tk.END)
+            for n, task in enumerate(tasks):  # note: you cant change treeview iid
+                if task[4] == '':
+                    self.tree_cl.insert(parent='', index="end", iid=task[0], text='', values=(
+                        n + 1, task[1], task[2], task[3], "Random [1-1000]"))
+                    self.txt_main.insert(tk.END, f"Task {task[1]} has no saved randomizer. Default selected\n")
+                    self.txt_main.see(tk.END)
                     continue
-                self.tree_cl.insert(parent='', index="end", iid=record[0], text='',
-                                    values=(n + 1, record[1], record[2], record[3], record[4]))
+                self.tree_cl.insert(parent='', index="end", iid=task[0], text='',
+                                    values=(n + 1, task[1], task[2], task[3], task[4]))
             conn = sqlite3.connect("completed.db")
             c = conn.cursor()
-            c.execute("SELECT rowid, * FROM records")
-            records = c.fetchall()
+            c.execute("SELECT rowid, * FROM tasks")
+            tasks = c.fetchall()
             conn.commit()
             conn.close()
             self.txt_right.config(state=tk.NORMAL)
-            for record in records:
-                self.txt_right.insert(tk.END, f'{record[0]}: {record[1]}')
+            for task in tasks:
+                self.txt_right.insert(tk.END, f'{task[0]}: {task[1]}')
             self.txt_right.config(state=tk.DISABLED)
 
         f_left.columnconfigure(0, weight=1)
@@ -792,50 +770,67 @@ class NextTask(tk.Frame):
         self.lbl_score_all.config(text="Completed: " + str(len(self.txt_right.get('1.0', tk.END).split('\n')) - 2))
         self.txt_right.config(state=tk.DISABLED)
 
-    def import_records(self, db, viewer):
+    def pattern_check(self, target, *mode):
+        if target:
+            reg = re.findall(patterns[3], target)
+            if reg:
+                rizer = []
+                for repet in reg:
+                    if repet[4]:
+                        if repet[4] > repet[5]:
+                            self.txt_main.insert(tk.END, f"Skipped: {repet[0]}. Try: {repet[1]} ([{repet[5]}"
+                                                         f"-{repet[4]}])\n")
+                            continue
+                        rizer.append(f"{repet[1]} [{repet[4]}-{repet[5]}]")
+                    elif repet[6]:
+                        if addup(repet[6]) > addup(repet[7]):
+                            self.txt_main.insert(tk.END, f"Skipped: {repet[0]}. Try: {repet[1]} ([{repet[7]}"
+                                                         f"-{repet[6]}])\n")
+                            continue
+                        rizer.append(f"{repet[1]} [{repet[6]}-{repet[7]}]")
+                    else:
+                        reg2 = re.findall(pattern_sample, repet[8])
+                        rizer.append(
+                            f"{repet[1]} [{', '.join([f'{repet2[0]}/{repet2[2]}' if repet2[2] else repet2[0] for repet2 in reg2])}]")
+                rizer = ', '.join(rizer)
+                if mode == 1 or mode == 2:
+                    self.ent_routput.delete('0', tk.END)
+                    self.ent_routput.insert('0', rizer)
+                return rizer
+            else:
+                if mode == 1 or mode == 2:
+                    self.ent_routput.focus()
+                    self.ent_routput.selection_range(0, tk.END)
+                if mode == 1:
+                    tksd.messagebox.showerror("Error", f"Unable to read input. At:\n{expl[3]}\nUsing default instead")
+                if mode == 2:
+                    tksd.messagebox.showerror("Error", f"Unable to read input. At:\n{expl[3]}")
+                    return
+        return "Random [1-1000]"
+
+    def import_tasks(self, db, viewer):
         text_file = tkfd.askopenfilename(title="Open File", filetypes=(("Text Files", "*.txt"),))
         if text_file:
             try:
                 with open(text_file, "r", encoding='utf-8') as f:
                     conn = sqlite3.connect(db)
                     c = conn.cursor()
-                    c.execute("SELECT * FROM records")
+                    c.execute("SELECT * FROM tasks")
                     lines = f.readlines()
                     if db == "tasks.db":
                         cnames = [row[0] for row in c.fetchall()]
                         for line in lines:
-                            print(line)
                             reg = re.match(pattern_import, line)
                             if reg and reg[1] not in cnames:
-                                reg2 = re.findall(patterns[3], reg[4])
-                                if reg2:
-                                    rizer = []
-                                    for repet in reg2:
-                                        if repet[4]:
-                                            if repet[4] > repet[5]:
-                                                tksd.messagebox.showerror("Warning", f"Skipped: {repet[0]}. Try: "
-                                                                                     f"{repet[1]} ([{repet[5]}-"
-                                                                                     f"{repet[4]}])\n")
-                                                continue
-                                            rizer.append(f"{repet[1]} [{repet[4]}-{repet[5]}]")
-                                        else:
-                                            if addup(repet[6]) > addup(repet[7]):
-                                                tksd.messagebox.showerror("Warning", f"Skipped: {repet[0]}. Try: "
-                                                                                     f"{repet[1]} ([{repet[7]}-"
-                                                                                     f"{repet[6]}])\n")
-                                                continue
-                                            rizer.append(f"{repet[1]} [{repet[6]}-{repet[7]}]")
-                                    rizer = ', '.join(rizer)
-                                else:
-                                    rizer = "Random [1-1000]"
-                                c.execute("INSERT INTO records VALUES (:name, :weight, :onoff, :sqlrandomizer)",
+                                rizer = self.pattern_check(reg[4], 3)
+                                c.execute("INSERT INTO tasks VALUES (:name, :weight, :onoff, :sqlrandomizer)",
                                           {
                                               "name": reg[1],
                                               "weight": reg[2],
                                               "onoff": reg[3],
                                               "sqlrandomizer": rizer
                                           })
-                                c.execute("SELECT * FROM records")
+                                c.execute("SELECT * FROM tasks")
                                 viewer.insert(parent='', index="end", iid=c.lastrowid, text='',
                                               values=(len(c.fetchall()), reg[1], reg[2], reg[3], rizer))
                     elif db == "completed.db":
@@ -843,8 +838,8 @@ class NextTask(tk.Frame):
                         viewer.config(state=tk.NORMAL)
                         for line in lines:
                             if line not in ctasks and re.match(r"\S", line):
-                                c.execute("INSERT INTO records VALUES (:task)", {"task": line})
-                                c.execute("SELECT * FROM records")
+                                c.execute("INSERT INTO tasks VALUES (:task)", {"task": line})
+                                c.execute("SELECT * FROM tasks")
                                 viewer.insert(tk.END, f"{c.lastrowid}: {line}")
                                 ctasks.append(line)
                         viewer.config(state=tk.DISABLED)
@@ -872,12 +867,12 @@ class NextTask(tk.Frame):
 
         filemenu = tk.Menu(menubar, tearoff=0)
 
-        filemenu.add_command(label="Import tasks", command=lambda: self.import_records("tasks.db", self.tree_cl))
-        filemenu.add_command(label="Export tasks", command=lambda: export_records("tasks.db"))
+        filemenu.add_command(label="Import tasks", command=lambda: self.import_tasks("tasks.db", self.tree_cl))
+        filemenu.add_command(label="Export tasks", command=lambda: export_tasks("tasks.db"))
         filemenu.add_separator()
-        filemenu.add_command(label="Import completed tasks", command=lambda: self.import_records("completed.db",
-                                                                                                 self.txt_right))
-        filemenu.add_command(label="Export completed tasks", command=lambda: export_records("completed.db"))
+        filemenu.add_command(label="Import completed tasks", command=lambda: self.import_tasks("completed.db",
+                                                                                               self.txt_right))
+        filemenu.add_command(label="Export completed tasks", command=lambda: export_tasks("completed.db"))
 
         if __name__ == '__main__':
             titles = ["File", "Help"]
