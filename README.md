@@ -18,7 +18,7 @@ Example On/Off input: 1
 
 1 for keeping task in randomizer selection and 0 for ignoring from selection
 
-Example randomizer input: Chapter [1-20], character[a-z], characetrs[aaa-zzzz]
+Example randomizer input: Number [1-20], character[a-z], characters[aaa-zzzz], exercise[push ups, pull ups, squats]
 
 You can hold part of the randomizer result to keep that specific result and randomizer the rest.
 
