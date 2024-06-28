@@ -13,7 +13,7 @@ import re
 patterns = [r"^([^.,\n]+)$", r"^\s*(\d+)\s*$", r"^\s*(0|1)\s*$",
             r"(([^\s,[]+[^\s[]*(\s+[^\s[]+)*)\s*(\[\s*(-?\d+)\s*-\s*(-?\d+)\s*\]|"
             r"\[\s*([a-zA-Z]+)\s*-\s*([a-zA-Z]+)\s*\]|\[([^.,\n-\/][^\n-]*)\]))"]
-pattern_import = r"([^.,\n]+),\s*(\d+)\s*,\s*(0|1)(\s*,\s*[^\n]+)*"
+pattern_import = r"([^.,\n]+)(,\s*(\d+)\s*,\s*(0|1)(\s*,\s*[^\n]+)*)?"
 pattern_duplic_name = r"^.+(\((\d+)\))$"
 pattern_sample = r"\s*([^.,\n\/]+)\s*(\/\s*(\d+))*"
 
@@ -605,6 +605,10 @@ class NextTask(tk.Frame):
             ent_onoff.delete('0', tk.END)
             self.ent_routput.delete('0', tk.END)
 
+        def select_all():
+            for n in [kid for kid in self.tree_cl.get_children() if kid not in self.tree_cl.selection()]:
+                self.tree_cl.selection_toggle(n)
+
         def select_task(_):
             clear_entries()
             values = self.tree_cl.item(self.active_task, 'values')
@@ -637,6 +641,9 @@ class NextTask(tk.Frame):
 
         bt_clear = tk.Button(lf_c_btns, text="Clear entries", command=clear_entries)
         bt_clear.grid(row=0, column=5, pady=5, sticky='sew')
+
+        bt_selectall = tk.Button(lf_c_btns, text="Select all", command=select_all)
+        bt_selectall.grid(row=1, columnspan=6, sticky='sew')
 
         def motion(_):
             task = self.tree_cl.identify_row(self.tree_cl.winfo_pointery() - self.tree_cl.winfo_rooty())
@@ -702,6 +709,7 @@ class NextTask(tk.Frame):
         self.tree_cl.bind('<Button-1>', click_press)
         self.tree_cl.bind('<Double-Button-1>', double_click)
         self.tree_cl.bind('<ButtonRelease-1>', click_release)
+        self.tree_cl.bind('<Control-a>', lambda x: select_all())
 
         def create_databases():
             conn = sqlite3.connect("tasks.db")  # creates databases or connects to existing
@@ -822,17 +830,23 @@ class NextTask(tk.Frame):
                         for line in lines:
                             reg = re.match(pattern_import, line)
                             if reg and reg[1] not in cnames:
-                                rizer = self.pattern_check(reg[4], 3)
+                                rizer = self.pattern_check(reg[5], 3)
+                                if not reg[2]:
+                                    weight_in = 1
+                                    onoff_in = 1
+                                else:
+                                    weight_in = reg[3]
+                                    onoff_in = reg[4]
                                 c.execute("INSERT INTO tasks VALUES (:name, :weight, :onoff, :sqlrandomizer)",
                                           {
                                               "name": reg[1],
-                                              "weight": reg[2],
-                                              "onoff": reg[3],
+                                              "weight": weight_in,
+                                              "onoff": onoff_in,
                                               "sqlrandomizer": rizer
                                           })
                                 c.execute("SELECT * FROM tasks")
                                 viewer.insert(parent='', index="end", iid=c.lastrowid, text='',
-                                              values=(len(c.fetchall()), reg[1], reg[2], reg[3], rizer))
+                                              values=(len(c.fetchall()), reg[1], weight_in, onoff_in, rizer))
                     elif db == "completed.db":
                         ctasks = [row[0] for row in c.fetchall()]
                         viewer.config(state=tk.NORMAL)
