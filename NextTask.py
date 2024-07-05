@@ -10,12 +10,12 @@ import ctypes
 import sys
 import re
 
-patterns = [r"^([^.,\n]+)$", r"^\s*(\d+)\s*$", r"^\s*(0|1)\s*$",
+patterns = [r"^([^,\n]+)$", r"^\s*(\d+)\s*$", r"^\s*(0|1)\s*$",
             r"(([^\s,[]+[^\s[]*(\s+[^\s[]+)*)\s*(\[\s*(-?\d+)\s*-\s*(-?\d+)\s*\]|"
             r"\[\s*([a-zA-Z]+)\s*-\s*([a-zA-Z]+)\s*\]|\[([^.,\n-\/][^\n-]*)\]))"]
-pattern_import = r"([^.,\n]+)(,\s*(\d+)\s*,\s*(0|1)(\s*,\s*[^\n]+)*)?"
+pattern_import = r"([^,\n]+)(,\s*(\d+)\s*,\s*(0|1)(\s*,\s*[^\n]+)*)?"
 pattern_duplic_name = r"^.+(\((\d+)\))$"
-pattern_sample = r"\s*([^.,\n\/]+)\s*(\/\s*(\d+))*"
+pattern_sample = r"\s*([^,\n\/]+)\s*(\/\s*(\d+))*"
 
 expl = ["Name: Characters other than '.' and ','.",
         "Weights: Any integer.\n\t\tEqual weights = equal propability to be picked.",
