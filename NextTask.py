@@ -10,23 +10,32 @@ import ctypes
 import sys
 import re
 
-patterns = [r"^([^,\n]+)$", r"^\s*(\d+)\s*$", r"^\s*(0|1)\s*$",
-            r"(([^\s,[]+[^\s[]*(\s+[^\s[]+)*)\s*(\[\s*(-?\d+)\s*-\s*(-?\d+)\s*\]|"
-            r"\[\s*([a-zA-Z]+)\s*-\s*([a-zA-Z]+)\s*\]|\[([^.,\n-\/][^\n-]*)\]))"]
-pattern_import = r"([^,\n]+)(,\s*(\d+)\s*,\s*(0|1)(\s*,\s*[^\n]+)*)?"
-pattern_duplic_name = r"^.+(\((\d+)\))$"
-pattern_sample = r"\s*([^,\n\/]+)\s*(\/\s*(\d+))*"
+if sys.platform == "win32":
+    default_fg = "SystemButtonText"
+else:
+    default_fg = "#000000"
+
+patterns = [r"^(?P<name>[^,\n]+)$", r"^\s*(?P<weight>\d+)\s*$", r"^\s*(?P<onoff>0|1)\s*$",
+            r"(?P<match>(?P<name>[^\s,[]+[^\s[]*(?:\s+[^\s[]+)*)\s*(?:\[\s*(?P<num_lo>-?\d+)\s*-\s*(?P<num_hi>-?\d+)\s*\]|"
+            r"\[\s*(?P<str_lo>[a-zA-Z]+)\s*-\s*(?P<str_hi>[a-zA-Z]+)\s*\]|\[(?P<choices>[^.,\n-\/][^\n-]*)\]))"]
+pattern_import = r"(?P<name>[^,\n]+)(?P<options>,\s*(?P<weight>\d+)\s*,\s*(?P<onoff>0|1)(?P<rizer>\s*,\s*[^\n]+)*)?"
+pattern_duplic_name = r"^.+\((?P<num_dupe>\d+)\)$"
+pattern_sample = r"\s*(?P<name>[^,\n\/]+)\s*(?:\/\s*(?P<weight>\d+))*"
 
 expl = ["Name: Characters other than '.' and ','.",
         "Weights: Any integer.\n\t\tEqual weights = equal propability to be picked.",
         "On/Off: 0 or 1.\n\t\t0 to exclude and 1 to include in the randomizer.",
         f"Randomizer: Explanation WIP. Pattern:\n\t\t{patterns[3]}"]
-helptext = """If you want to edit the completed tasks you can:\n1) Export .txt file\n2) Delete completed.db\n3) Open \
+helptext = """
+If you want to edit the completed tasks you can:\n1) Export .txt file\n2) Delete completed.db\n3) Open \
 the exported .txt file with a notepad\n4) Make your edits\n5) Import the new txt file\nThe pattern needs to be the \
-same as before, for them to appear."""
+same as before, for them to appear.
+
+version 1.4
+"""
 
 
-def minrev(anchor, tupos, *target, reverse=False, fg="SystemButtonText", fgactive="Maroon"):
+def minrev(anchor, tupos, *target, reverse=False, fg=default_fg, fgactive="Maroon"):
     if any(target):
         if reverse:
             fg, fgactive = fgactive, fg
@@ -107,6 +116,14 @@ class NextTask(tk.Frame):
         f_width = master.winfo_rootx() - master.winfo_x()
         self.rm = self.master  # rootmaster
         self.memory = None
+        # self.memory[0] = iid
+        # self.memory[1] = task name
+        # self.memory[2] = weight
+        # self.memory[3] = randomizer
+        # self.memory[4] = matches, match object
+        # self.memory[5] = randomizer indices
+        # self.memory[6] = output
+
         self.mem_output = []
         self.mem_index = 0
         self.active_task = None
@@ -120,7 +137,10 @@ class NextTask(tk.Frame):
 
         if __name__ == "__main__":
             # 20:menu height, 31:upborder height(fullscreen is 8 less)
-            self.rm.geometry(f"{w - 900}x{h - ctypes.windll.user32.GetSystemMetrics(4) - 20 - 200}+{-f_width}+0")
+            if sys.platform == "win32":
+                self.rm.geometry(f"{w - 900}x{h - ctypes.windll.user32.GetSystemMetrics(4) - 20 - 200}+{-f_width}+0")
+            else:
+                self.rm.geometry(f"{w - 900}x{h - 20 - 200}+{-f_width}+0")
             self.rm.update_idletasks()
 
         self.__initmenu__()
@@ -147,30 +167,30 @@ class NextTask(tk.Frame):
         f_up.grid(row=0, column=0, sticky='new')
 
         def bt_call1():
-            if not bt_1["fg"] == "SystemButtonText" and not bt_2["fg"] == "SystemButtonText":
+            if bt_1["fg"] != default_fg and bt_2["fg"] != default_fg:
                 pw.add(f_right)
-                minrev(bt_1, "grid", *[self.tree_cl, vsb1, hsb1], fgactive="SystemButtonText", fg="#505050")
-            elif bt_1["fg"] == "SystemButtonText":
-                minrev(bt_1, "grid", *[self.tree_cl, vsb1, hsb1], fgactive="SystemButtonText", fg="#505050")
+                minrev(bt_1, "grid", *[self.tree_cl, vsb1, hsb1], fgactive=default_fg, fg="#505050")
+            elif bt_1["fg"] == default_fg:
+                minrev(bt_1, "grid", *[self.tree_cl, vsb1, hsb1], fgactive=default_fg, fg="#505050")
                 pw.remove(f_right)
             else:
-                minrev(bt_2, "grid", *[self.txt_right, vsb2, hsb2], fgactive="SystemButtonText", fg="#505050")
-                minrev(bt_1, "grid", *[self.tree_cl, vsb1, hsb1], fgactive="SystemButtonText", fg="#505050")
+                minrev(bt_2, "grid", *[self.txt_right, vsb2, hsb2], fgactive=default_fg, fg="#505050")
+                minrev(bt_1, "grid", *[self.tree_cl, vsb1, hsb1], fgactive=default_fg, fg="#505050")
 
         def bt_call2():
-            if not bt_1["fg"] == "SystemButtonText" and not bt_2["fg"] == "SystemButtonText":
+            if bt_1["fg"] != default_fg and bt_2["fg"] != default_fg:
                 pw.add(f_right)
-                minrev(bt_2, "grid", *[self.txt_right, vsb2, hsb2], fgactive="SystemButtonText", fg="#505050")
-            elif bt_2["fg"] == "SystemButtonText":
-                minrev(bt_2, "grid", *[self.txt_right, vsb2, hsb2], fgactive="SystemButtonText", fg="#505050")
+                minrev(bt_2, "grid", *[self.txt_right, vsb2, hsb2], fgactive=default_fg, fg="#505050")
+            elif bt_2["fg"] == default_fg:
+                minrev(bt_2, "grid", *[self.txt_right, vsb2, hsb2], fgactive=default_fg, fg="#505050")
                 pw.remove(f_right)
             else:
-                minrev(bt_1, "grid", *[self.tree_cl, vsb1, hsb1], fgactive="SystemButtonText", fg="#505050")
-                minrev(bt_2, "grid", *[self.txt_right, vsb2, hsb2], fgactive="SystemButtonText", fg="#505050")
+                minrev(bt_1, "grid", *[self.tree_cl, vsb1, hsb1], fgactive=default_fg, fg="#505050")
+                minrev(bt_2, "grid", *[self.txt_right, vsb2, hsb2], fgactive=default_fg, fg="#505050")
 
         lbl_score = tk.Label(f_up, text=f"Completed this session: {self.score}", bg="rosybrown", relief="raised")
         lbl_score.pack(fill='both', side='left', expand=True)
-        self.lbl_score_all = tk.Label(f_up, text=f"Completed: ", bg="rosybrown", relief="raised")
+        self.lbl_score_all = tk.Label(f_up, bg="rosybrown", relief="raised")
         self.lbl_score_all.pack(fill='both', side='left', expand=True)
 
         bt_1 = tk.Button(f_up, text="Tasks Table", bg="#9C6F6F", activebackground="#9C6F6F", command=bt_call1)
@@ -258,47 +278,46 @@ class NextTask(tk.Frame):
             if not self.memory:
                 return rt()
             output = self.memory[1]
-            if self.bt_r["text"] == "roll lower":
-                for k, group in enumerate(self.memory[4]):
-                    if group[4]:
-                        if self.mem_output[k] == int(group[4]):
-                            self.mem_output[k] = int(group[5]) + 1
-                        self.mem_output[k] = random.randint(int(group[4]), self.mem_output[k] - 1)
-                    elif group[6]:
-                        if self.mem_output[k] == group[6]:
-                            self.mem_output[k] = strup(addup(group[7]) + 1)
-                        self.mem_output[k] = strup(random.randint(addup(group[6]), addup(self.mem_output[k]) - 1))
+            for k, match in enumerate(self.memory[4]):
+                name = match.group("name")
+                num_lo = match.group("num_lo")
+                num_hi = match.group("num_hi")
+                str_lo = match.group("str_lo")
+                str_hi = match.group("str_hi")
+                choices = match.group("choices")
+                if num_lo and num_hi:
+                    low, high = int(num_lo), int(num_hi)
+                    if self.bt_r["text"] == "roll lower":
+                        if self.mem_output[k] == low:
+                            self.mem_output[k] = high + 1
+                        self.mem_output[k] = random.randint(low, self.mem_output[k] - 1)
                     else:
-                        reg = re.findall(pattern_sample, group[8])
-                        temp = [x for x in [repet[0] for repet in reg] if x != self.mem_output[k]]
-                        if temp:
-                            we = random.choices(temp, weights=[int(repet[2]) if repet[2] else 1 for repet in reg])[0]
-                            self.mem_output[k] = we
-                    output += f", {group[1]}: {self.mem_output[k]}"
-            else:
-                for k, group in enumerate(self.memory[4]):
-                    if group[4]:
-                        s = random.randint(int(group[4]), int(group[5]))
-                        if int(group[4]) != int(group[5]):
+                        if low != high:
+                            s = random.randint(low, high)
                             while s == self.mem_output[k]:
-                                s = random.randint(int(group[4]), int(group[5]))
+                                s = random.randint(low, high)
+                        else:
+                            s = low
                         self.mem_output[k] = s
-                    elif group[6]:
-                        qw = strup(random.randint(addup(group[6]), addup(group[7])))
-                        if group[6] != group[7]:
-                            while qw == self.mem_output[k]:
-                                qw = strup(random.randint(addup(group[6]), addup(group[7])))
-                        self.mem_output[k] = qw
+                elif str_lo and str_hi:
+                    if self.bt_r["text"] == "roll lower":
+                        if self.mem_output[k] == str_lo:
+                            self.mem_output[k] = strup(addup(str_hi) + 1)
+                        self.mem_output[k] = strup(random.randint(addup(str_lo), addup(self.mem_output[k]) - 1))
                     else:
-                        reg = re.findall(pattern_sample, group[8])
-                        reg = [x for x in reg if x[0] != self.mem_output[k]]
-                        if reg:
-                            we = random.choices([repet[0] for repet in reg],
-                                                weights=[int(repet[2]) if repet[2] else 1 for repet in reg])[0]
-                            self.mem_output[k] = we
-                    output += f", {group[1]}: {self.mem_output[k]}"
+                        qw = strup(random.randint(addup(str_lo), addup(str_hi)))
+                        if str_lo != str_hi:
+                            while qw == self.mem_output[k]:
+                                qw = strup(random.randint(addup(str_lo), addup(str_hi)))
+                        self.mem_output[k] = qw
+                elif choices:
+                    reg = [x for x in list(re.finditer(pattern_sample, choices)) if x.group('name') != self.mem_output[k]]
+                    if reg:
+                        self.mem_output[k] = random.choices([repet.group('name') for repet in reg],
+                                                            weights=[int(repet.group('weight')) if repet.group('weight') else 1 for repet in reg])[0]
+                output += f", {name}: {self.mem_output[k]}"
             self.memory[6] = output
-            for ctask in [': '.join(gramh.split(': ')[1:]) for gramh in self.txt_right.get('1.0', tk.END).split('\n')]:
+            for ctask in [': '.join(line.split(': ')[1:]) for line in self.txt_right.get('1.0', tk.END).split('\n')]:
                 if ctask == output:
                     output += " is already completed"
             self.txt_main.see(tk.END)
@@ -309,21 +328,27 @@ class NextTask(tk.Frame):
                 return rt()
             output = self.memory[1]
             if not self.mem_output:
-                self.mem_output.extend([0] * len(self.memory[4]))
-            for k, group in enumerate(self.memory[4]):
+                self.mem_output.extend([0] * sum(1 for _ in self.memory[4]))
+            for k, match in enumerate(self.memory[4]):
+                name = match.group("name")
+                num_lo = match.group("num_lo")
+                num_hi = match.group("num_hi")
+                str_lo = match.group("str_lo")
+                str_hi = match.group("str_hi")
+                choices = match.group("choices")
                 if k not in self.held:
-                    if group[4]:
-                        self.mem_output[k] = random.randint(int(group[4]), int(group[5]))
-                    elif group[6]:
-                        self.mem_output[k] = strup(random.randint(addup(group[6]), addup(group[7])))
-                    else:
-                        reg = re.findall(pattern_sample, group[8])
-                        self.mem_output[k] = random.choices([repet[0] for repet in reg],
-                                                            weights=[int(repet[2]) if repet[2] else 1 for repet in
+                    if num_lo:
+                        self.mem_output[k] = random.randint(int(num_lo), int(num_hi))
+                    elif str_lo:
+                        self.mem_output[k] = strup(random.randint(addup(str_lo), addup(str_hi)))
+                    elif choices:
+                        reg = list(re.finditer(pattern_sample, choices))
+                        self.mem_output[k] = random.choices([repet.group('name') for repet in reg],
+                                                            weights=[int(repet.group('weight')) if repet.group('weight') else 1 for repet in
                                                                      reg])[0]
-                output += f", {group[1]}: {self.mem_output[k]}"
+                output += f", {name}: {self.mem_output[k]}"
             self.memory[6] = output
-            for ctask in [': '.join(gramh.split(': ')[1:]) for gramh in self.txt_right.get('1.0', tk.END).split('\n')]:
+            for ctask in [': '.join(line.split(': ')[1:]) for line in self.txt_right.get('1.0', tk.END).split('\n')]:
                 if ctask == output:
                     output += " is already completed"
             self.txt_main.see(tk.END)
@@ -338,26 +363,25 @@ class NextTask(tk.Frame):
                     temp.append([iid] + self.tree_cl.item(iid)['values'][1:3] + [self.tree_cl.item(iid)['values'][4]])
             if not temp:
                 return "All tasks are set to OFF"
+            self.memory = random.choices(temp, weights=[int(n) for n in np.array(temp)[:, 2].tolist()])[0]
             txt_routput.config(state=tk.NORMAL)
             txt_routput.delete('0.0', tk.END)
-            self.memory = random.choices(temp, weights=[int(n) for n in np.array(temp)[:, 2].tolist()])[0]
             txt_routput.insert(tk.END, self.memory[3])
             txt_routput.config(state=tk.DISABLED)
-            self.memory.append(re.findall(patterns[3], self.memory[3]))
-            self.memory.append(list(map(lambda x: (self.memory[3].index(x), self.memory[3].index(x) + len(x)),
-                                        np.array(self.memory[4])[:, 0].tolist())))
+            # finditer returns an iterator so materialize it into a list to be able to use it multiple times
+            self.memory.append(list(re.finditer(patterns[3], self.memory[3])))  # self.memory[4]: matches, match object
+            self.memory.append([m.span() for m in self.memory[4]])  # self.memory[5]: randomizer indices
             self.memory.append('')
             self.mem_output = []
             self.mem_index = 0
             self.held = []
-            temp = ((self.memory[5][0][1] + self.memory[5][0][0]) // 2 - 1) * ' '
-            lbl_index.config(text='%s^' % temp)
+            lbl_index.config(text=f'{((self.memory[5][self.mem_index][1] + self.memory[5][self.mem_index][0]) // 2 - 1) * " "}^')
             return rr()
 
         def complete():
             if not self.memory:
                 return
-            for ctask in [': '.join(gramh.split(': ')[1:]) for gramh in self.txt_right.get('1.0', tk.END).split('\n')]:
+            for ctask in [': '.join(line.split(': ')[1:]) for line in self.txt_right.get('1.0', tk.END).split('\n')]:
                 if ctask == self.memory[6]:
                     self.txt_main.insert(tk.END, "Task is already completed" + '\n')
                     self.txt_main.see(tk.END)
@@ -366,7 +390,7 @@ class NextTask(tk.Frame):
             lbl_score.config(text=f"Completed this session: {self.score}")
             self.txt_right.config(state=tk.NORMAL)
             self.txt_right.insert(tk.END, f"{self.txt_right.index(tk.INSERT).split('.')[0]}: {self.memory[6]}\n")
-            self.lbl_score_all.config(text="Completed: " + str(len(self.txt_right.get('1.0', tk.END).split('\n')) - 2))
+            self.lbl_score_all.config(text="Completed: " + str(len([x for x in self.txt_right.get('1.0', tk.END).split('\n') if x])))
             self.txt_right.config(state=tk.DISABLED)
             conn = sqlite3.connect("completed.db")
             c = conn.cursor()
@@ -384,8 +408,7 @@ class NextTask(tk.Frame):
                 return
             else:
                 self.mem_index += n
-            temp = ((self.memory[5][self.mem_index][1] + self.memory[5][self.mem_index][0]) // 2 - 1) * ' '
-            lbl_index.config(text='%s^' % temp)
+            lbl_index.config(text=f'{((self.memory[5][self.mem_index][1] + self.memory[5][self.mem_index][0]) // 2 - 1) * " "}^')
 
         def hold():
             if not self.memory:
@@ -402,11 +425,11 @@ class NextTask(tk.Frame):
         f_routput = tk.Frame(self, bg="#D3D3D3")
         f_routput.grid(row=2, column=0, sticky='sew', ipady=10)
 
-        lblu_routput_lbl = tk.Label(f_routput, text=f"Randomizer output:   ", bg="#D3D3D3", font=("Helvetica", 12))
-        txt_routput = tk.Text(f_routput, height=1, spacing1=10, bg="#D3D3D3", font=("Lucida Console", 12), wrap="none")
+        lblu_routput_lbl = tk.Label(f_routput, text="Randomizer output:   ", bg="#D3D3D3", font=("Helvetica", 12))
+        txt_routput = tk.Text(f_routput, height=1, spacing1=10, bg="#D3D3D3", font=("DejaVu Sans Mono", 12), wrap="none")
         txt_routput.config(state=tk.DISABLED)
         txt_routput.tag_configure("hold", foreground="blue")
-        lbl_index = tk.Label(f_routput, text='', bg="#D3D3D3", anchor='w', font=("Lucida Console", 12))
+        lbl_index = tk.Label(f_routput, text='', bg="#D3D3D3", anchor='w', font=("DejaVu Sans Mono", 12))
         bt_left = tk.Button(f_routput, text="  <  ", command=lambda: move(-1))
         bt_right = tk.Button(f_routput, text="  >  ", command=lambda: move(1))
         bt_hold = tk.Button(f_routput, text="Hold", command=hold)
@@ -545,15 +568,15 @@ class NextTask(tk.Frame):
                     entry.selection_range(0, tk.END)
                     return
                 if n == 0:
-                    name = reg.group(1)
+                    name = reg.group("name")
                     names = [self.tree_cl.item(iid)['values'][1] for iid in self.tree_cl.get_children()]
                     if name in names:
                         m = 0
-                        reg2 = re.match(pattern_duplic_name, reg.group(1))
+                        reg2 = re.match(pattern_duplic_name, reg.group("name"))
                         if reg2:
                             while name in names:
                                 m += 1
-                                name = str(int(reg2.group(2)) + m).join(name.rsplit(str(int(reg2.group(2)) + m - 1), 1))
+                                name = str(int(reg2.group("num_dupe")) + m).join(name.rsplit(str(int(reg2.group("num_dupe")) + m - 1), 1))
                             continue
                         name += ' (1)'
                         while name in names:
@@ -755,7 +778,7 @@ class NextTask(tk.Frame):
             conn.close()
             self.txt_right.config(state=tk.NORMAL)
             for task in tasks:
-                self.txt_right.insert(tk.END, f'{task[0]}: {task[1]}')
+                self.txt_right.insert(tk.END, f'{task[0]}: {task[1]} \n')
             self.txt_right.config(state=tk.DISABLED)
 
         f_left.columnconfigure(0, weight=1)
@@ -774,32 +797,30 @@ class NextTask(tk.Frame):
         create_databases()
         query_database()
 
-        self.txt_right.config(state=tk.NORMAL)
-        self.lbl_score_all.config(text="Completed: " + str(len(self.txt_right.get('1.0', tk.END).split('\n')) - 2))
-        self.txt_right.config(state=tk.DISABLED)
+        self.lbl_score_all.config(text="Completed: " + str(len([x for x in self.txt_right.get('1.0', tk.END).split('\n') if x])))
 
     def pattern_check(self, target, *mode):
         if target:
-            reg = re.findall(patterns[3], target)
+            reg = list(re.finditer(patterns[3], target))
             if reg:
                 rizer = []
                 for repet in reg:
-                    if repet[4]:
-                        if repet[4] > repet[5]:
-                            self.txt_main.insert(tk.END, f"Skipped: {repet[0]}. Try: {repet[1]} ([{repet[5]}"
-                                                         f"-{repet[4]}])\n")
+                    if repet.group("num_lo"):
+                        if int(repet.group("num_lo")) > int(repet.group("num_hi")):
+                            self.txt_main.insert(tk.END, f"Skipped: {repet.group("match")}. Try: {repet.group("name")} ([{repet.group("num_hi")}"
+                                                         f"-{repet.group("num_lo")}])\n")
                             continue
-                        rizer.append(f"{repet[1]} [{repet[4]}-{repet[5]}]")
-                    elif repet[6]:
-                        if addup(repet[6]) > addup(repet[7]):
-                            self.txt_main.insert(tk.END, f"Skipped: {repet[0]}. Try: {repet[1]} ([{repet[7]}"
-                                                         f"-{repet[6]}])\n")
+                        rizer.append(f"{repet.group("name")} [{repet.group("num_lo")}-{repet.group("num_hi")}]")
+                    elif repet.group("str_lo"):
+                        if addup(repet.group("str_lo")) > addup(repet.group("str_hi")):
+                            self.txt_main.insert(tk.END, f"Skipped: {repet.group("match")}. Try: {repet.group("name")} ([{repet.group("str_hi")}"
+                                                         f"-{repet.group("str_lo")}])\n")
                             continue
-                        rizer.append(f"{repet[1]} [{repet[6]}-{repet[7]}]")
+                        rizer.append(f"{repet.group("name")} [{repet.group("str_lo")}-{repet.group("str_hi")}]")
                     else:
-                        reg2 = re.findall(pattern_sample, repet[8])
+                        reg2 = list(re.finditer(pattern_sample, repet.group("choices")))
                         rizer.append(
-                            f"{repet[1]} [{', '.join([f'{repet2[0]}/{repet2[2]}' if repet2[2] else repet2[0] for repet2 in reg2])}]")
+                            f"{repet.group("name")} [{', '.join([f'{repet2.group("name")}/{repet2.group("weight")}' if repet2.group("weight") else repet2.group("name") for repet2 in reg2])}]")
                 rizer = ', '.join(rizer)
                 if mode == 1 or mode == 2:
                     self.ent_routput.delete('0', tk.END)
@@ -816,7 +837,7 @@ class NextTask(tk.Frame):
                     return
         return "Random [1-1000]"
 
-    def import_tasks(self, db, viewer):
+    def import_tasks(self, db):
         text_file = tkfd.askopenfilename(title="Open File", filetypes=(("Text Files", "*.txt"),))
         if text_file:
             try:
@@ -829,38 +850,38 @@ class NextTask(tk.Frame):
                         cnames = [row[0] for row in c.fetchall()]
                         for line in lines:
                             reg = re.match(pattern_import, line)
-                            if reg and reg[1] not in cnames:
-                                rizer = self.pattern_check(reg[5], 3)
-                                if not reg[2]:
+                            if reg and reg.group('name') not in cnames:
+                                rizer_in = self.pattern_check(reg.group("rizer"), 3)
+                                name_in = reg.group("name")
+                                if not reg.group("options"):
                                     weight_in = 1
                                     onoff_in = 1
                                 else:
-                                    weight_in = reg[3]
-                                    onoff_in = reg[4]
+                                    weight_in = reg.group("weight")
+                                    onoff_in = reg.group("onoff")
                                 c.execute("INSERT INTO tasks VALUES (:name, :weight, :onoff, :sqlrandomizer)",
                                           {
-                                              "name": reg[1],
+                                              "name": name_in,
                                               "weight": weight_in,
                                               "onoff": onoff_in,
-                                              "sqlrandomizer": rizer
+                                              "sqlrandomizer": rizer_in
                                           })
                                 c.execute("SELECT * FROM tasks")
-                                viewer.insert(parent='', index="end", iid=c.lastrowid, text='',
-                                              values=(len(c.fetchall()), reg[1], weight_in, onoff_in, rizer))
+                                self.tree_cl.insert(parent='', index="end", iid=c.lastrowid, text='',
+                                              values=(len(c.fetchall()), name_in, weight_in, onoff_in, rizer_in))
                     elif db == "completed.db":
                         ctasks = [row[0] for row in c.fetchall()]
-                        viewer.config(state=tk.NORMAL)
+                        self.txt_right.config(state=tk.NORMAL)
                         for line in lines:
                             if line not in ctasks and re.match(r"\S", line):
                                 c.execute("INSERT INTO tasks VALUES (:task)", {"task": line})
                                 c.execute("SELECT * FROM tasks")
-                                viewer.insert(tk.END, f"{c.lastrowid}: {line}")
+                                self.txt_right.insert(tk.END, f"{c.lastrowid}: {line}")
                                 ctasks.append(line)
-                        viewer.config(state=tk.DISABLED)
+                        self.txt_right.config(state=tk.DISABLED)
+                        self.lbl_score_all.config(text="Completed: " + str(len([x for x in self.txt_right.get('1.0', tk.END).split('\n') if x])))
                     conn.commit()
                     conn.close()
-                    self.lbl_score_all.config(
-                        text="Completed: " + str(len(self.txt_right.get('1.0', tk.END).split('\n')) - 2))
             except FileNotFoundError:
                 tksd.messagebox.showerror("Error", f"{text_file} file not found")
 
@@ -881,11 +902,10 @@ class NextTask(tk.Frame):
 
         filemenu = tk.Menu(menubar, tearoff=0)
 
-        filemenu.add_command(label="Import tasks", command=lambda: self.import_tasks("tasks.db", self.tree_cl))
+        filemenu.add_command(label="Import tasks", command=lambda: self.import_tasks("tasks.db"))
         filemenu.add_command(label="Export tasks", command=lambda: export_tasks("tasks.db"))
         filemenu.add_separator()
-        filemenu.add_command(label="Import completed tasks", command=lambda: self.import_tasks("completed.db",
-                                                                                               self.txt_right))
+        filemenu.add_command(label="Import completed tasks", command=lambda: self.import_tasks("completed.db",))
         filemenu.add_command(label="Export completed tasks", command=lambda: export_tasks("completed.db"))
 
         if __name__ == '__main__':
@@ -907,10 +927,11 @@ class NextTask(tk.Frame):
 
 
 if __name__ == '__main__':
-    try:  # >= win 8.1
-        ctypes.windll.shcore.SetProcessDpiAwareness(2)
-    except:  # win 8.0 or less
-        ctypes.windll.user32.SetProcessDPIAware()
+    if sys.platform == "win32":
+        try:  # >= win 8.1
+            ctypes.windll.shcore.SetProcessDpiAwareness(2)
+        except:  # win 8.0 or less
+            ctypes.windll.user32.SetProcessDPIAware()
     root = tk.Tk()
     NextTask(root).grid(sticky='nsew')
     root.title('Next Task')
