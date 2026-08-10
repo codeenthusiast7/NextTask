@@ -1,6 +1,7 @@
 import tkinter.simpledialog as tksd
 from string import ascii_lowercase
 import tkinter.filedialog as tkfd
+from pathlib import Path
 from tkinter import ttk
 import tkinter as tk
 import numpy as np
@@ -9,6 +10,10 @@ import random
 import ctypes
 import sys
 import re
+import os
+
+
+os.chdir(Path(__file__).resolve().parent)
 
 if sys.platform == "win32":
     default_fg = "SystemButtonText"
@@ -17,7 +22,7 @@ else:
 
 patterns = [r"^(?P<name>[^,\n]+)$", r"^\s*(?P<weight>\d+)\s*$", r"^\s*(?P<onoff>0|1)\s*$",
             r"(?P<match>(?P<name>[^\s,[]+[^\s[]*(?:\s+[^\s[]+)*)\s*(?:\[\s*(?P<num_lo>-?\d+)\s*-\s*(?P<num_hi>-?\d+)\s*\]|"
-            r"\[\s*(?P<str_lo>[a-zA-Z]+)\s*-\s*(?P<str_hi>[a-zA-Z]+)\s*\]|\[(?P<choices>[^.,\n-\/][^\n-]*)\]))"]
+            r"\[\s*(?P<str_lo>[a-zA-Z]+)\s*-\s*(?P<str_hi>[a-zA-Z]+)\s*\]|\[(?P<choices>\s*[^,\n\]]+(?:\s*,\s*[^,\n\]]+)*\s*)\]))"]
 pattern_import = r"(?P<name>[^,\n]+)(?P<options>,\s*(?P<weight>\d+)\s*,\s*(?P<onoff>0|1)(?P<rizer>\s*,\s*[^\n]+)*)?"
 pattern_duplic_name = r"^.+\((?P<num_dupe>\d+)\)$"
 pattern_sample = r"\s*(?P<name>[^,\n\/]+)\s*(?:\/\s*(?P<weight>\d+))*"
@@ -124,7 +129,7 @@ class NextTask(tk.Frame):
         # self.memory[5] = randomizer indices
         # self.memory[6] = output
 
-        self.mem_output = []
+        self.mem_output = [] # only the results of output, not the names
         self.mem_index = 0
         self.active_task = None
         self.first_task = None
@@ -287,7 +292,7 @@ class NextTask(tk.Frame):
                 choices = match.group("choices")
                 if num_lo and num_hi:
                     low, high = int(num_lo), int(num_hi)
-                    if self.bt_r["text"] == "roll lower":
+                    if bt_r["text"] == "roll lower":
                         if self.mem_output[k] == low:
                             self.mem_output[k] = high + 1
                         self.mem_output[k] = random.randint(low, self.mem_output[k] - 1)
@@ -300,7 +305,7 @@ class NextTask(tk.Frame):
                             s = low
                         self.mem_output[k] = s
                 elif str_lo and str_hi:
-                    if self.bt_r["text"] == "roll lower":
+                    if bt_r["text"] == "roll lower":
                         if self.mem_output[k] == str_lo:
                             self.mem_output[k] = strup(addup(str_hi) + 1)
                         self.mem_output[k] = strup(random.randint(addup(str_lo), addup(self.mem_output[k]) - 1))
@@ -369,7 +374,9 @@ class NextTask(tk.Frame):
             txt_routput.insert(tk.END, self.memory[3])
             txt_routput.config(state=tk.DISABLED)
             # finditer returns an iterator so materialize it into a list to be able to use it multiple times
-            self.memory.append(list(re.finditer(patterns[3], self.memory[3])))  # self.memory[4]: matches, match object
+            a = list(re.finditer(patterns[3], self.memory[3]))
+            print(a)
+            self.memory.append(a)  # self.memory[4]: matches, match object
             self.memory.append([m.span() for m in self.memory[4]])  # self.memory[5]: randomizer indices
             self.memory.append('')
             self.mem_output = []
@@ -388,9 +395,9 @@ class NextTask(tk.Frame):
                     return
             self.score += 1
             lbl_score.config(text=f"Completed this session: {self.score}")
+            self.lbl_score_all.config(text="Completed: " + str(len([x for x in self.txt_right.get('1.0', tk.END).split('\n') if x])))
             self.txt_right.config(state=tk.NORMAL)
             self.txt_right.insert(tk.END, f"{self.txt_right.index(tk.INSERT).split('.')[0]}: {self.memory[6]}\n")
-            self.lbl_score_all.config(text="Completed: " + str(len([x for x in self.txt_right.get('1.0', tk.END).split('\n') if x])))
             self.txt_right.config(state=tk.DISABLED)
             conn = sqlite3.connect("completed.db")
             c = conn.cursor()
@@ -444,8 +451,8 @@ class NextTask(tk.Frame):
         f_bot = tk.Frame(self)
         f_bot.grid(row=3, column=0, sticky='nsew')
 
-        self.bt_r = tk.Button(f_bot, text="roll different", command=lambda: [r(), self.txt_main.see(tk.END)])
         bt_ddm = tk.Button(f_bot, text='^', command=lambda: minrev(bt_ddm, 'grid', f_li))
+        bt_r = tk.Button(f_bot, text="roll different", command=lambda: [r(), self.txt_main.see(tk.END)])
         bt_rr = tk.Button(f_bot, text="roll randomizer", command=lambda: [rr(), self.txt_main.see(tk.END)])
         bt_rt = tk.Button(f_bot, text="roll task", command=lambda: [rt(), self.txt_main.see(tk.END)])
         bt_clear = tk.Button(f_bot, text="clear text", command=lambda: self.txt_main.delete('1.0', tk.END))
@@ -453,7 +460,7 @@ class NextTask(tk.Frame):
         bt_edit = tk.Button(f_bot, text="Edit", command=lambda: minrev(bt_edit, "grid", *[lf_c, lf_c2, lf_c_btns]))
 
         bt_ddm.pack(fill='both', side='left')
-        self.bt_r.pack(fill='both', side='left', expand=True)
+        bt_r.pack(fill='both', side='left', expand=True)
         bt_rr.pack(fill='both', side='left', expand=True)
         bt_rt.pack(fill='both', side='left', expand=True)
         bt_clear.pack(fill='both', side='left', expand=True)
@@ -464,8 +471,8 @@ class NextTask(tk.Frame):
         f_li.grid(row=1, column=0, sticky='sw', padx=(bt_ddm.winfo_reqwidth(), 0))
         f_li.grid_remove()
 
-        bt_ch_rl = tk.Button(f_li, text="roll lower", command=lambda: self.bt_r.config(text="roll lower"))
-        bt_ch_rd = tk.Button(f_li, text="roll different", command=lambda: self.bt_r.config(text="roll different"))
+        bt_ch_rl = tk.Button(f_li, text="roll lower", command=lambda: bt_r.config(text="roll lower"))
+        bt_ch_rd = tk.Button(f_li, text="roll different", command=lambda: bt_r.config(text="roll different"))
 
         bt_ch_rl.pack(fill='both', side='top', expand=True)
         bt_ch_rd.pack(fill='both', side='top', expand=True)
@@ -530,26 +537,23 @@ class NextTask(tk.Frame):
                         return
                     change.append(timh[n])
             if not self.focused or self.ent_routput in self.focused:
-                rizer = self.pattern_check(self.ent_routput.get(), 2)
-                if not rizer:
+                if not self.randomizer_check(self.ent_routput.get(), 2):
                     return
                 change.append(timh[3])
-            else:
-                rizer = self.ent_routput.get()
             conn = sqlite3.connect("tasks.db")
             c = conn.cursor()
             command = "UPDATE tasks SET %s WHERE rowid = :rowid" % ','.join(change)
             for task in self.tree_cl.selection():
+                print(task)
                 c.execute(command,
                           {
                               "name": ent_name.get(),
                               "weight": ent_wgt.get(),
                               "onoff": ent_onoff.get(),
-                              "sqlrandomizer": rizer,
+                              "sqlrandomizer": self.ent_routput.get(),
                               "rowid": task
                           })
-            command = "SELECT rowid, * FROM tasks WHERE rowid in ({0})".format(
-                ', '.join('?' for _ in self.tree_cl.selection()))
+            command = f"SELECT rowid, * FROM tasks WHERE rowid in ({', '.join('?' for _ in self.tree_cl.selection())})"
             c.execute(command, self.tree_cl.selection())
             tasks = c.fetchall()
             conn.commit()
@@ -572,7 +576,7 @@ class NextTask(tk.Frame):
                     names = [self.tree_cl.item(iid)['values'][1] for iid in self.tree_cl.get_children()]
                     if name in names:
                         m = 0
-                        reg2 = re.match(pattern_duplic_name, reg.group("name"))
+                        reg2 = re.match(pattern_duplic_name, name)
                         if reg2:
                             while name in names:
                                 m += 1
@@ -583,7 +587,7 @@ class NextTask(tk.Frame):
                             m += 1
                             name = str(1 + m).join(name.rsplit(str(m), 1))
                         continue
-            rizer = self.pattern_check(self.ent_routput.get(), 1)
+            rizer = self.randomizer_check(self.ent_routput.get(), 1)
             conn = sqlite3.connect("tasks.db")
             c = conn.cursor()
             c.execute("INSERT INTO tasks VALUES (:name, :weight, :onoff, :sqlrandomizer)",
@@ -600,15 +604,16 @@ class NextTask(tk.Frame):
             conn.close()
 
         def remove_selected():
-            if self.tree_cl.selection() and tksd.messagebox.askyesno("Warning!", "Delete the selected tasks?"):
-                conn = sqlite3.connect("tasks.db")
-                c = conn.cursor()
-                c.executemany("DELETE from tasks WHERE rowid=?", [(task,) for task in self.tree_cl.selection()])
-                for task in self.tree_cl.selection():
-                    self.tree_cl.delete(task)
-                conn.commit()
-                conn.close()
-                arithmise(self.tree_cl)
+            if not self.tree_cl.selection() or not tksd.messagebox.askyesno("Warning!", "Delete the selected tasks?"):
+                return
+            conn = sqlite3.connect("tasks.db")
+            c = conn.cursor()
+            c.executemany("DELETE from tasks WHERE rowid=?", [(task,) for task in self.tree_cl.selection()])
+            for task in self.tree_cl.selection():
+                self.tree_cl.delete(task)
+            conn.commit()
+            conn.close()
+            arithmise(self.tree_cl)
 
         def up():
             rows = self.tree_cl.selection()
@@ -799,7 +804,7 @@ class NextTask(tk.Frame):
 
         self.lbl_score_all.config(text="Completed: " + str(len([x for x in self.txt_right.get('1.0', tk.END).split('\n') if x])))
 
-    def pattern_check(self, target, *mode):
+    def randomizer_check(self, target, *mode):
         if target:
             reg = list(re.finditer(patterns[3], target))
             if reg:
@@ -851,7 +856,7 @@ class NextTask(tk.Frame):
                         for line in lines:
                             reg = re.match(pattern_import, line)
                             if reg and reg.group('name') not in cnames:
-                                rizer_in = self.pattern_check(reg.group("rizer"), 3)
+                                rizer_in = self.randomizer_check(reg.group("rizer"), 3)
                                 name_in = reg.group("name")
                                 if not reg.group("options"):
                                     weight_in = 1
