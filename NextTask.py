@@ -374,9 +374,7 @@ class NextTask(tk.Frame):
             txt_routput.insert(tk.END, self.memory[3])
             txt_routput.config(state=tk.DISABLED)
             # finditer returns an iterator so materialize it into a list to be able to use it multiple times
-            a = list(re.finditer(patterns[3], self.memory[3]))
-            print(a)
-            self.memory.append(a)  # self.memory[4]: matches, match object
+            self.memory.append(list(re.finditer(patterns[3], self.memory[3])))  # self.memory[4]: matches, match object
             self.memory.append([m.span() for m in self.memory[4]])  # self.memory[5]: randomizer indices
             self.memory.append('')
             self.mem_output = []
@@ -544,7 +542,6 @@ class NextTask(tk.Frame):
             c = conn.cursor()
             command = "UPDATE tasks SET %s WHERE rowid = :rowid" % ','.join(change)
             for task in self.tree_cl.selection():
-                print(task)
                 c.execute(command,
                           {
                               "name": ent_name.get(),
