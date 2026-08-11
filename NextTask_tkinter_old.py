@@ -682,6 +682,7 @@ class NextTask(tk.Frame):
             ac = self.tree_cl.index(self.active_task)
             c = self.tree_cl.index(task)
             kids = self.tree_cl.get_children()
+            print(a, ac, c)
             if c > ac:
                 if c > a > ac:  # down from in to away
                     toggled = kids[ac:a] + kids[a + 1:c + 1]
@@ -696,6 +697,7 @@ class NextTask(tk.Frame):
                     toggled = kids[c:ac]
                 else:  # up and in
                     toggled = kids[c + 1:ac + 1]
+            print(toggled)
             for n in toggled:
                 self.tree_cl.selection_toggle(n)
             self.active_task = task
