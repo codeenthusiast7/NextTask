@@ -1,19 +1,19 @@
 from pathlib import Path
 import os
 from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
-    QPushButton, QLabel, QLineEdit, QTextEdit, QTreeView, QMenuBar, QMenu,
-    QFileDialog, QMessageBox, QSplitter, QFrame, QSizePolicy, QAbstractItemView
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, 
+    QPushButton, QLabel, QLineEdit, QTextEdit, QTreeView, QFileDialog,
+    QMessageBox, QSplitter, QFrame, QSizePolicy, QAbstractItemView
 )
-from PySide6.QtGui import QFont, QFontMetrics, QPalette, QColor, QTextCursor, QTextCharFormat, QStandardItemModel, QStandardItem, QCursor
-from PySide6.QtCore import QPoint, Qt, QItemSelectionModel, QAbstractItemModel, QModelIndex
+from PySide6.QtGui import QFont, QColor, QTextCursor, QTextCharFormat, QStandardItemModel, QStandardItem, QCursor
+from PySide6.QtCore import Qt, QItemSelectionModel, QSortFilterProxyModel
 import sys
 import sqlite3
 import random
 import re
 from string import ascii_lowercase
 import numpy as np
-from datetime import date
+from datetime import datetime
 
 
 os.chdir(Path(__file__).resolve().parent)
@@ -33,7 +33,7 @@ patterns = [r"^(?P<name>[^,\n]+)$", r"^\s*(?P<weight>\d+)\s*$", r"^\s*(?P<onoff>
             r"(?P<match>(?P<name>[^\s,[]+[^\s[]*(?:\s+[^\s[]+)*)\s*(?:\[\s*(?P<num_lo>-?\d+)\s*-\s*(?P<num_hi>-?\d+)\s*\]|"
             r"\[\s*(?P<str_lo>[a-zA-Z]+)\s*-\s*(?P<str_hi>[a-zA-Z]+)\s*\]|\[(?P<choices>\s*[^,\n\]]+(?:\s*,\s*[^,\n\]]+)*\s*)\]))"]
 pattern_import_tasks = r"(?P<row_pos>\d+)\s*,\s*(?P<name>[^,\n]+)\s*,\s*(?P<options>(?P<weight>\d+)\s*,\s*(?P<onoff>0|1)\s*,\s*(?P<rizer>[^\n]+)*)?"
-pattern_import_ctasks = r"(?P<topic>[^,\n]+)\s*,\s*(?P<task>[^,\n]+)\s*,\s*(?P<date>d{4}-\d{2}-\d{2})?"
+pattern_import_ctasks = r"(?P<topic>[^,\n]+)\s*,\s*(?P<task>[^,\n]+)\s*,\s*(?P<datetime>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6})?"
 pattern_duplic_name = r"^.+\((?P<num_dupe>\d+)\)$"
 pattern_sample = r"\s*(?P<name>[^,\n\/]+)\s*(?:\/\s*(?P<weight>\d+))*"
 
@@ -125,19 +125,21 @@ def strup(ns):
 
 
 def export_tasks(db):
-    fname, _ = QFileDialog.getSaveFileName('Save File', filter='Text Files (*.txt)')
+    fname, _ = QFileDialog.getSaveFileName(w, 'Save File', filter='Text Files (*.txt)')
     if fname:
         with open(fname, 'w', encoding='utf-8') as f:
             conn = sqlite3.connect(db)
             c = conn.cursor()
             if db == 'tasks.db':
                 c.execute('SELECT * FROM tasks')
-                for task in c.fetchall():
-                    f.write(f"{task[0]},{task[1]},{task[2]},{task[3]},{task[4]}\n")
+                tasks = c.fetchall()
+                tasks.sort(key=lambda task: int(task[0]))
+                for task in tasks:
+                    f.write(f"{task[0]}, {task[1]}, {task[2]}, {task[3]}, {task[4]}\n")
             elif db == 'completed.db':
                 c.execute('SELECT * FROM tasks')
                 for ctask in c.fetchall():
-                    f.write(f"{ctask[0]},{ctask[1]},{ctask[2]}\n")
+                    f.write(f"{ctask[0]}, {ctask[1]}, {ctask[2]}\n")
             conn.close()
 
 
@@ -153,6 +155,16 @@ def focus_lbl(_, lbl):
     else:
         lbl.setStyleSheet("background-color: #D3D3D3;")
         w.focused.remove(entry)
+
+
+class TaskSortModel(QSortFilterProxyModel):
+    def lessThan(self, left, right):
+        if left.column() == 0:
+            return left.data(Qt.ItemDataRole.UserRole) < right.data(
+                Qt.ItemDataRole.UserRole
+            )
+
+        return super().lessThan(left, right)
 
 
 class TreeView(QTreeView):
@@ -194,7 +206,6 @@ class TreeView(QTreeView):
         super().keyPressEvent(event)
 
 
-
 class ClickableLabel(QLabel):
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -211,8 +222,8 @@ class NextTask(QMainWindow):
         # self.memory[0] = task name
         # self.memory[1] = randomizer
         # self.memory[2] = matches, match object
-        # self.memory[1] = randomizer indices
-        # self.memory[2] = output
+        # self.memory[3] = randomizer indices
+        # self.memory[4] = output
 
         self.mem_output = [] # only the results of output, not the names
         self.mem_index = 0
@@ -380,7 +391,11 @@ class NextTask(QMainWindow):
         self.tree_model.setHorizontalHeaderLabels(["No.", "Name", "Weight", "On/Off", "Randomizer"])
         self.tree = TreeView()
         right_layout.addWidget(self.tree)
+        proxy = TaskSortModel()
+        proxy.setSourceModel(self.tree_model)
         self.tree.setModel(self.tree_model)
+        self.tree.setModel(proxy)
+        self.tree.setSortingEnabled(True)
         self.tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.tree.setIndentation(0)
         self.tree.setAlternatingRowColors(True)
@@ -391,7 +406,11 @@ class NextTask(QMainWindow):
         self.tree_model_completed.setHorizontalHeaderLabels(["No.", "Topic", "Task", "Date"])
         self.tree_completed = TreeView()
         right_layout.addWidget(self.tree_completed)
+        proxy_completed = TaskSortModel()
+        proxy_completed.setSourceModel(self.tree_model_completed)
         self.tree_completed.setModel(self.tree_model_completed)
+        self.tree_completed.setModel(proxy_completed)
+        self.tree_completed.setSortingEnabled(True)
         self.tree_completed.setAlternatingRowColors(True)
         self.tree_completed.setUniformRowHeights(True)
         self.tree_completed.setEditTriggers(QTreeView.NoEditTriggers)
@@ -572,23 +591,30 @@ class NextTask(QMainWindow):
                 self.txt_main.append('Task is already completed')
                 return
             self.score += 1
-            lbl_score.setText(f"Completed this session: {self.score}")
-            self.lbl_score_all.setText(f'Completed: {self.tree_model_completed.rowCount()}')
             conn = sqlite3.connect('completed.db')
             c = conn.cursor()
             task_stripped = self.memory[4][(len(self.memory[0]) + 2):].lstrip()
-            c.execute('INSERT INTO tasks VALUES (:topic, :task, :date)', {'topic': self.memory[0], 'task': task_stripped, 'date': date.today()})
+            c.execute('INSERT INTO tasks VALUES (:topic, :task, :datetime)',
+                      {
+                          'topic': self.memory[0],
+                          'task': task_stripped,
+                          'datetime': datetime.now().isoformat()
+                      })
             row_items = [
                 QStandardItem(str(self.tree_model_completed.rowCount() + 1)),
                 QStandardItem(self.memory[0]),
                 QStandardItem(task_stripped),
-                QStandardItem(date.today().strftime("%Y-%m-%d")),
+                QStandardItem(datetime.now().strftime("%Y-%m-%d")),
             ]
             row_items[0].setData(c.lastrowid, Qt.ItemDataRole.UserRole)
-            row_items[3].setData(date.today(), Qt.ItemDataRole.UserRole)
+            row_items[0].setData(self.tree_model_completed.rowCount() + 1, Qt.ItemDataRole.UserRole + 1)
+            row_items[2].setData(self.memory[4], Qt.ItemDataRole.UserRole)
+            row_items[3].setData(datetime.now(), Qt.ItemDataRole.UserRole)
             conn.commit()
             conn.close()
             self.tree_model_completed.appendRow(row_items)
+            lbl_score.setText(f"Completed this session: {self.score}")
+            self.lbl_score_all.setText(f'Completed: {self.tree_model_completed.rowCount()}')
             self.txt_main.append('Completed!')
 
         def move(n):
@@ -616,7 +642,7 @@ class NextTask(QMainWindow):
         
         def find_in_tree_completed(word):
             for row in range(self.tree_model_completed.rowCount()):
-                if self.tree_model_completed.item(row, 1).text() == word:
+                if self.tree_model_completed.item(row, 2).data(Qt.ItemDataRole.UserRole) == word:
                     return True
             return False
 
@@ -777,6 +803,7 @@ class NextTask(QMainWindow):
                 QStandardItem(self.ent_routput.text()),
             ]
             row_items[0].setData(c.lastrowid, Qt.ItemDataRole.UserRole)
+            row_items[0].setData(self.tree_model.rowCount() + 1, Qt.ItemDataRole.UserRole + 1)
             self.tree_model.appendRow(row_items)
             conn.commit()
             conn.close()
@@ -898,7 +925,7 @@ class NextTask(QMainWindow):
             c.execute('''CREATE TABLE if not exists tasks (
                     topic text,
                     task text,
-                    date text)
+                    datetime text)
                     ''')
             conn.commit()
             conn.close()
@@ -911,7 +938,6 @@ class NextTask(QMainWindow):
             conn.close()
             tasks.sort(key=lambda task: int(task[1]))
             for task in tasks:
-                print(task)
                 row_items = [
                     QStandardItem(str(task[1])),
                     QStandardItem(task[2]),
@@ -920,6 +946,7 @@ class NextTask(QMainWindow):
                     QStandardItem(task[5] if task[5] else 'Random [1-1000]'),
                 ]
                 row_items[0].setData(task[0], Qt.ItemDataRole.UserRole)
+                row_items[0].setData(task[1], Qt.ItemDataRole.UserRole + 1)
                 row_items[2].setTextAlignment(Qt.AlignCenter)
                 row_items[3].setTextAlignment(Qt.AlignCenter)
                 self.tree_model.appendRow(row_items)
@@ -934,9 +961,12 @@ class NextTask(QMainWindow):
                     QStandardItem(str(n + 1)),
                     QStandardItem(ctask[1]),
                     QStandardItem(ctask[2]),
-                    QStandardItem(ctask[3]),
+                    QStandardItem(datetime.fromisoformat(ctask[3]).strftime("%Y-%m-%d")),
                 ]
                 row_items[0].setData(ctask[0], Qt.ItemDataRole.UserRole)
+                row_items[0].setData(n + 1, Qt.ItemDataRole.UserRole + 1)
+                row_items[2].setData(f"{ctask[1]}, {ctask[2]}", Qt.ItemDataRole.UserRole)
+                row_items[3].setData(datetime.fromisoformat(ctask[3]))
                 self.tree_model_completed.appendRow(row_items)
 
 
@@ -1120,6 +1150,7 @@ class NextTask(QMainWindow):
                                     QStandardItem(rizer_in),
                                 ]
                                 row_items[0].setData(c.lastrowid, Qt.ItemDataRole.UserRole)
+                                row_items[0].setData(int(row_pos_in), Qt.ItemDataRole.UserRole + 1)
                                 row_items[2].setTextAlignment(Qt.AlignCenter)
                                 row_items[3].setTextAlignment(Qt.AlignCenter)
                                 row_items_list.append(row_items)
@@ -1135,20 +1166,23 @@ class NextTask(QMainWindow):
                             if reg and reg.group('task') not in ctasks:
                                 topic_in = reg.group('topic')
                                 task_in = reg.group('task')
-                                date_in = reg.group('date')
-                                c.execute('INSERT INTO tasks VALUES (:topic, :task, :date)',
+                                date_in = datetime.fromisoformat(reg.group('datetime'))
+                                c.execute('INSERT INTO tasks VALUES (:topic, :task, :datetime)',
                                           {
                                               'topic': topic_in,
                                               'task': task_in,
-                                              'date': date_in
+                                              'datetime': reg.group('datetime')
                                           })
                                 row_items = [
                                     QStandardItem(str(self.tree_model_completed.rowCount() + 1)),
                                     QStandardItem(topic_in),
                                     QStandardItem(task_in),
-                                    QStandardItem(date_in),
+                                    QStandardItem(date_in.strftime("%Y-%m-%d")),
                                 ]
                                 row_items[0].setData(c.lastrowid, Qt.ItemDataRole.UserRole)
+                                row_items[0].setData(self.tree_model_completed.rowCount() + 1, Qt.ItemDataRole.UserRole + 1)
+                                row_items[2].setData(f"{topic_in}, {task_in}", Qt.ItemDataRole.UserRole)
+                                row_items[3].setData(date_in, Qt.ItemDataRole.UserRole)
                                 self.tree_model_completed.appendRow(row_items)
                                 ctasks.append(task_in)
                         self.lbl_score_all.setText('Completed: ' + str(self.tree_model_completed.rowCount()))
