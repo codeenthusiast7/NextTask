@@ -1,11 +1,10 @@
 from pathlib import Path
-import os
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QDialog,
     QPushButton, QLabel, QLineEdit, QTextEdit, QTreeView, QFileDialog,
     QMessageBox, QSplitter, QFrame, QSizePolicy, QAbstractItemView
 )
-from PySide6.QtGui import QFont, QColor, QTextCursor, QTextCharFormat, QStandardItemModel, QStandardItem, QCursor
+from PySide6.QtGui import QFont, QColor, QTextCursor, QTextCharFormat, QStandardItemModel, QStandardItem, QCursor, QIcon
 from PySide6.QtCore import Qt, QItemSelectionModel, QSortFilterProxyModel
 import sys
 import sqlite3
@@ -14,9 +13,13 @@ import re
 from string import ascii_lowercase
 import numpy as np
 from datetime import datetime
+import shutil
+import subprocess
 
-
-os.chdir(Path(__file__).resolve().parent)
+if getattr(sys, 'frozen', False):
+    app_dir = Path(sys.executable).resolve().parent
+else:
+    app_dir = Path(__file__).resolve().parent
 
 if sys.platform == "win32":
     default_fg = "SystemButtonText"
@@ -24,23 +27,118 @@ else:
     default_fg = "#000000"
 inactive_fg = "#505050"
 
+default_rizer = "Random [1-1000]"
+
 fmt = QTextCharFormat()
 fmt.setForeground(QColor("blue"))
 default_fmt = QTextCharFormat()
 default_fmt.setForeground(QColor("black"))
 
-patterns = [r"^(?P<name>[^,\n]+)$", r"^\s*(?P<weight>\d+)\s*$", r"^\s*(?P<onoff>0|1)\s*$",
-            r"(?P<match>(?P<name>[^\s,[]+[^\s[]*(?:\s+[^\s[]+)*)\s*(?:\[\s*(?P<num_lo>-?\d+)\s*-\s*(?P<num_hi>-?\d+)\s*\]|"
-            r"\[\s*(?P<str_lo>[a-zA-Z]+)\s*-\s*(?P<str_hi>[a-zA-Z]+)\s*\]|\[(?P<choices>\s*[^,\n\]]+(?:\s*,\s*[^,\n\]]+)*\s*)\]))"]
-pattern_import_tasks = r"(?P<row_pos>\d+)\s*,\s*(?P<name>[^,\n]+)\s*,\s*(?P<options>(?P<weight>\d+)\s*,\s*(?P<onoff>0|1)\s*,\s*(?P<rizer>[^\n]+)*)?"
-pattern_import_ctasks = r"(?P<name>[^,\n]+)\s*,\s*(?P<task>[^,\n]+)\s*,\s*(?P<datetime>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6})?"
+patterns = [r"^(?P<name>[^,\n\s](?:[^,\n]*[^,\n\s])?)$",
+            r"^\s*(?P<weight>\d+)\s*$",
+            r"^\s*(?P<onoff>0|1)\s*$",
+            re.compile(
+            r"""
+            (?P<match>
+                (?P<name>
+                    [^,\n\[\s]
+                    (?:[^,\n\[]*[^,\n\[\s])?
+                )
+                (?:
+                    \s*\[\s*
+                    (?P<num_lo>\d+)
+                    \s*-\s*
+                    (?P<num_hi>\d+)
+                    \s*\]
+                    |
+                    \s*\[\s*
+                    (?P<str_lo>[a-zA-Z]+)
+                    \s*-\s*
+                    (?P<str_hi>[a-zA-Z]+)
+                    \s*\]
+                    |
+                    \s*\[\s*
+                    (?P<choices>
+                        [^,\n\]\s]
+                        (?:[^,\n\]]*[^,\n\]\s])?
+                        (?:
+                            \s*,\s*
+                            [^,\n\]\s]
+                            (?:[^,\n\]]*[^,\n\]\s])?
+                        )*
+                    )
+                    \s*\]
+                )
+            )
+            """,
+            re.VERBOSE,
+            )
+            ]
+
+pattern_import_tasks = re.compile(
+                        r"""
+                        (?:
+                            (?P<row_pos>\d+)
+                            \s*,\s*
+                        )?
+                        (?P<name>
+                            [^,\n\s]
+                            (?:[^,\n]*[^,\n\s])?
+                        )
+                        (?P<options>
+                            \s*,\s*
+                            (?P<weight>\d+)
+                            \s*,\s*
+                            (?P<onoff>0|1)
+                            (?:
+                                \s*,\s*
+                                (?P<rizer>[^\n]+)
+                            )?
+                        )?
+                        """,
+                        re.VERBOSE,
+                       )
+pattern_import_ctasks = re.compile(
+                        r"""
+                        (?P<name>
+                            [^,\n\s]
+                            (?:[^,\n]*[^,\n\s])?
+                        )
+                        (?:
+                            \s*,\s*
+                            (?P<task>[^,\n\s]
+                                (?:[^,\n]*[^,\n\s])?
+                            )
+                        )?
+                        (?:
+                            \s*,\s*\[\s*
+                            (?P<keywords>
+                                [^,\n\]\s]
+                                (?:[^,\n\]]*[^,\n\]\s])?
+                                (?:
+                                    \s*,\s*[^,\n\]\s]
+                                    (?:[^,\n\]]*[^,\n\]\s])?
+                                )*
+                            )
+                            \s*\]
+                        )?
+                        (?:
+                            \s*,\s*
+                            (?P<datetime>
+                                \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}
+                            )
+                        )?
+                        """,
+                        re.VERBOSE,
+                        )
 pattern_duplic_name = r"^.+\((?P<num_dupe>\d+)\)$"
-pattern_sample = r"\s*(?P<name>[^,\n\/]+)\s*(?:\/\s*(?P<weight>\d+))*"
+pattern_sample = r"\s*(?P<name>[^,\n\/\s](?:[^,\n\/]*[^,\n\/\s])?)\s*(?:\/\s*(?P<weight>\d+))*"
+pattern_current_task = r"(?P<full_task>(?P<name>[^,\n\s](?:[^,\n]*[^,\n\s])?)(?:\s*,\s*(?P<task>[^\n]+)*)?)"
 
 expl = ["Name: Characters other than '.' and ','.",
         "Weights: Any integer.\n\tEqual weights = equal propability to be picked.",
         "On/Off: 0 or 1.\n\t0 to exclude and 1 to include in the randomizer.",
-        f"Randomizer: Explanation WIP. Pattern:\n\t{patterns[3]}"]
+        f"Randomizer pattern:\n\t{patterns[3]}"]
 helptext = f"""
 Patterns:   {expl[0]}
             {expl[1]}
@@ -67,7 +165,7 @@ button_style_tabs = """
 
 def cleanup():
     if w.movedRows:
-        conn = sqlite3.connect('tasks.db')
+        conn = sqlite3.connect(app_dir / 'tasks.db')
         c = conn.cursor()
         c.execute('SELECT rowid, * FROM tasks')
         tasks = c.fetchall()
@@ -126,10 +224,10 @@ def strup(ns):
 
 
 def export_tasks(db):
-    fname, _ = QFileDialog.getSaveFileName(w, 'Save File', filter='Text Files (*.txt)')
+    fname, _ = QFileDialog.getSaveFileName(w, 'Save File', str(app_dir), filter='Text Files (*.txt)')
     if fname:
         with open(fname, 'w', encoding='utf-8') as f:
-            conn = sqlite3.connect(db)
+            conn = sqlite3.connect(app_dir / db)
             c = conn.cursor()
             if db == 'tasks.db':
                 c.execute('SELECT * FROM tasks')
@@ -221,10 +319,8 @@ class NextTask(QMainWindow):
         self.setWindowTitle('Next Task')
         self.memory = None
         # self.memory[0] = task name
-        # self.memory[1] = randomizer
-        # self.memory[2] = matches, match object
-        # self.memory[3] = randomizer indices
-        # self.memory[4] = output
+        # self.memory[1] = matches, match object
+        # self.memory[2] = randomizer indices
 
         self.mem_output = [] # only the results of output, not the names
         self.mem_index = 0
@@ -235,6 +331,9 @@ class NextTask(QMainWindow):
         self.held = []
         self.movedRows = False
         self.doubleClicked = False
+
+        self.notes_url = app_dir / 'Notes'
+        self.notes_url.mkdir(exist_ok=True)
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -352,7 +451,11 @@ class NextTask(QMainWindow):
         splitter = QSplitter(Qt.Horizontal)
         main_layout.addWidget(splitter)
 
-        self.txt_main = QTextEdit(splitter)
+        left_frame = QFrame(splitter)
+        left_layout = QVBoxLayout(left_frame)
+
+        self.txt_main = QTextEdit()
+        left_layout.addWidget(self.txt_main)
         self.txt_main.setReadOnly(False)
         self.txt_main.setAcceptRichText(False)
         self.txt_main.setLineWrapMode(QTextEdit.NoWrap)
@@ -389,6 +492,14 @@ class NextTask(QMainWindow):
             "}"
         )
 
+        lbl_current_task = QLabel("Current task")
+        lbl_current_task.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        lbl_current_task.setFont(QFont("Helvetica", 12))
+        qle_current_task = QLineEdit()
+
+        left_layout.addWidget(lbl_current_task)
+        left_layout.addWidget(qle_current_task)
+
         right_frame = QFrame(splitter)
         right_layout = QVBoxLayout(right_frame)
 
@@ -413,7 +524,7 @@ class NextTask(QMainWindow):
         self.tree.setEditTriggers(QTreeView.NoEditTriggers)
 
         self.tree_model_completed = QStandardItemModel(0, 4)
-        self.tree_model_completed.setHorizontalHeaderLabels(["No.", "Name", "Task", "Date"])
+        self.tree_model_completed.setHorizontalHeaderLabels(["No.", "Name", "Task", "Keywords", "Files", "Date"])
         self.tree_completed = TreeView()
         self.tree_completed.setModel(self.tree_model_completed)
         self.tree_completed.setColumnWidth(0, 40)
@@ -498,7 +609,7 @@ class NextTask(QMainWindow):
             if not self.mem_output:
                 return rd()
             output = self.memory[0]
-            for k, match in enumerate(self.memory[2]):
+            for k, match in enumerate(self.memory[1]):
                 name = match.group("name")
                 num_lo = match.group("num_lo")
                 num_hi = match.group("num_hi")
@@ -518,7 +629,7 @@ class NextTask(QMainWindow):
                     elif choices:
                         pass
                 output += f", {name}: {self.mem_output[k]}"
-            self.memory[4] = output
+            qle_current_task.setText(output)
             if find_in_tree_completed(output):
                 output += ' is already completed'
             self.txt_main.append(output)
@@ -529,9 +640,9 @@ class NextTask(QMainWindow):
             output = self.memory[0]
             same_task = True
             if not self.mem_output:
-                self.mem_output = [0] * sum(1 for _ in self.memory[2])
+                self.mem_output = [0] * sum(1 for _ in self.memory[1])
                 same_task = False
-            for k, match in enumerate(self.memory[2]):
+            for k, match in enumerate(self.memory[1]):
                 name = match.group("name")
                 num_lo = match.group("num_lo")
                 num_hi = match.group("num_hi")
@@ -562,7 +673,7 @@ class NextTask(QMainWindow):
                                                                 weights=[int(choice.group('weight')) if choice.group('weight') else 1 for choice in
                                                                         choices])[0]
                 output += f", {name}: {self.mem_output[k]}"
-            self.memory[4] = output
+            qle_current_task.setText(output)
             if find_in_tree_completed(output):
                 output += ' is already completed'
             self.txt_main.append(output)
@@ -582,46 +693,134 @@ class NextTask(QMainWindow):
                 return "All tasks are set to OFF"
             temp = random.choices(temp, weights=[int(n) for n in np.array(temp)[:, 1].tolist()])[0]
             del temp[1]  # deletes item_weight
-            self.memory = temp
+            self.memory = [temp[0]]
             txt_routput.setReadOnly(False)
-            txt_routput.setPlainText(self.memory[1])
+            txt_routput.setPlainText(temp[1])
             txt_routput.setReadOnly(True)
-            # finditer returns an iterator so materialize it into a list to be able to use it multiple times
-            self.memory.append(list(re.finditer(patterns[3], self.memory[1])))  # self.memory[2]: matches, match object
-            self.memory.append([m.span() for m in self.memory[2]])  # self.memory[3]: randomizer indices
-            self.memory.append('')
+            self.memory.append(list(re.finditer(patterns[3], temp[1])))  # self.memory[1]: matches, match object
+            self.memory.append([m.span() for m in self.memory[1]])  # self.memory[2]: randomizer indices
             self.mem_output = []
             self.mem_index = 0
             self.held = []
-            lbl_index.setText(f'{((self.memory[3][self.mem_index][1] + self.memory[3][self.mem_index][0]) // 2 - 1) * " "}^')
+            lbl_index.setText(f'{((self.memory[2][0][1] + self.memory[2][0][0]) // 2 - 1) * " "}^')
             rd()
 
         def complete():
-            if not self.memory:
+            reg = re.match(pattern_current_task, qle_current_task.text())
+            if not reg:
+                self.txt_main.append("No task found")
                 return
-            if find_in_tree_completed(self.memory[4]):
+            full_task = reg.group('full_task')
+            if find_in_tree_completed(full_task):
                 self.txt_main.append('Task is already completed')
                 return
+
+            dialog = QDialog(self)
+            dialog.setWindowTitle("Complete menu")
+            layout = QVBoxLayout(dialog)
+
+            frame_up = QFrame(dialog)
+            frame_down = QFrame(dialog)
+            layout.addWidget(frame_up)
+            layout.addWidget(frame_down)
+
+            layout_up = QGridLayout(frame_up)
+            layout_down = QHBoxLayout(frame_down)
+
+            lbl_keywords = QLabel("Keywords ")
+            qle_keywords = QLineEdit()
+            qle_keywords.setMaxLength(100)
+            layout_up.addWidget(lbl_keywords, 0, 0)
+            layout_up.addWidget(qle_keywords, 0, 1)
+
+            lbl_files = QLabel("Store files ")
+            button_files = QPushButton("Upload")
+            layout_up.addWidget(lbl_files, 1, 0)
+            layout_up.addWidget(button_files, 1, 1)
+
+            button_cancel = QPushButton("Cancel")
+            button_ok = QPushButton("OK")
+            layout_down.addWidget(button_cancel)
+            layout_down.addWidget(button_ok)
+
+            fnames = []
+
+            def store_files():
+                nonlocal fnames
+
+                selected, _ = QFileDialog.getOpenFileNames(self, 'Select Files', str(app_dir))
+
+                if selected:
+                    fnames = selected
+                    if len(selected) > 1:
+                        button_files.setText('Files selected!')
+                    else:
+                        button_files.setText('File selected!')
+
+            button_files.clicked.connect(store_files)
+            button_cancel.clicked.connect(dialog.reject)
+            button_ok.clicked.connect(dialog.accept)
+
+            dialog.adjustSize()
+
+            if dialog.exec() == QDialog.DialogCode.Rejected:
+                return
+
+            name = reg.group('name')
+            task_stripped = reg.group('task')
+            if task_stripped is None:
+                task_stripped = ""
             self.score += 1
-            conn = sqlite3.connect('completed.db')
+            conn = sqlite3.connect(app_dir / 'completed.db')
             c = conn.cursor()
-            task_stripped = self.memory[4][(len(self.memory[0]) + 2):].lstrip()
-            c.execute('INSERT INTO tasks VALUES (:name, :task, :datetime)',
-                      {
-                          'name': self.memory[0],
+            c.execute('''INSERT INTO tasks VALUES (
+                                                    :name,
+                                                    :task,
+                                                    :keywords,
+                                                    :folder_url,
+                                                    :datetime
+                                                  )
+                      ''', {
+                          'name': name,
                           'task': task_stripped,
+                          'keywords': qle_keywords.text(),
+                          'folder_url': None,
                           'datetime': datetime.now().isoformat()
-                      })
+            })
+
+            rowid = c.lastrowid
+            folder_url = self.notes_url / f'{rowid}'
+
+            c.execute('''
+                UPDATE tasks
+                SET folder_url = :folder_url
+                WHERE rowid = :rowid
+            ''', {
+                'folder_url': str(folder_url),
+                'rowid': rowid
+            })
+
+            folder_url.mkdir(exist_ok=True)
+
+            for fname in fnames:
+                shutil.move(fname, folder_url)
+
             row_items = [
                 QStandardItem(str(self.tree_model_completed.rowCount() + 1)),
-                QStandardItem(self.memory[0]),
+                QStandardItem(name),
                 QStandardItem(task_stripped),
+                QStandardItem(qle_keywords.text()),
+                QStandardItem(''),
                 QStandardItem(datetime.now().strftime("%Y-%m-%d")),
             ]
             row_items[0].setData(c.lastrowid, Qt.ItemDataRole.UserRole)
             row_items[0].setData(self.tree_model_completed.rowCount() + 1, Qt.ItemDataRole.UserRole + 1)
-            row_items[2].setData(self.memory[4], Qt.ItemDataRole.UserRole)
-            row_items[3].setData(datetime.now(), Qt.ItemDataRole.UserRole)
+            row_items[2].setData(full_task, Qt.ItemDataRole.UserRole)
+            if fnames:
+                row_items[4].setIcon(QIcon.fromTheme("document-open"))
+            row_items[4].setIcon(QIcon.fromTheme("document-open"))
+            row_items[4].setData(str(folder_url), Qt.UserRole)
+            row_items[5].setData(datetime.now(), Qt.ItemDataRole.UserRole)
             conn.commit()
             conn.close()
             self.tree_model_completed.appendRow(row_items)
@@ -632,29 +831,29 @@ class NextTask(QMainWindow):
         def move(n):
             if not self.memory:
                 return
-            if (n == - 1 and self.mem_index == 0) or (n == 1 and self.mem_index == len(self.memory[3]) - 1):
+            if (n == - 1 and self.mem_index == 0) or (n == 1 and self.mem_index == len(self.memory[2]) - 1):
                 return
             else:
                 self.mem_index += n
-            lbl_index.setText(f'{((self.memory[3][self.mem_index][1] + self.memory[3][self.mem_index][0]) // 2 - 1) * " "}^')
+            lbl_index.setText(f'{((self.memory[2][self.mem_index][1] + self.memory[2][self.mem_index][0]) // 2 - 1) * " "}^')
 
         def hold():
             if not self.memory:
                 return
             if self.mem_index in self.held:
-                txt_routput_cursor.setPosition(self.memory[3][self.mem_index][0])
-                txt_routput_cursor.setPosition(self.memory[3][self.mem_index][1], QTextCursor.MoveMode.KeepAnchor)
+                txt_routput_cursor.setPosition(self.memory[2][self.mem_index][0])
+                txt_routput_cursor.setPosition(self.memory[2][self.mem_index][1], QTextCursor.MoveMode.KeepAnchor)
                 txt_routput_cursor.mergeCharFormat(default_fmt)
                 self.held.remove(self.mem_index)
             else:
-                txt_routput_cursor.setPosition(self.memory[3][self.mem_index][0])
-                txt_routput_cursor.setPosition(self.memory[3][self.mem_index][1], QTextCursor.MoveMode.KeepAnchor)
+                txt_routput_cursor.setPosition(self.memory[2][self.mem_index][0])
+                txt_routput_cursor.setPosition(self.memory[2][self.mem_index][1], QTextCursor.MoveMode.KeepAnchor)
                 txt_routput_cursor.mergeCharFormat(fmt)
                 self.held.append(self.mem_index)
         
-        def find_in_tree_completed(word):
+        def find_in_tree_completed(task):
             for row in range(self.tree_model_completed.rowCount()):
-                if self.tree_model_completed.item(row, 2).data(Qt.ItemDataRole.UserRole) == word:
+                if self.tree_model_completed.item(row, 2).data(Qt.ItemDataRole.UserRole) == task:
                     return True
             return False
 
@@ -669,13 +868,13 @@ class NextTask(QMainWindow):
         edit_layout_1 = QGridLayout(edit_frame_1)
 
         lbl_name = ClickableLabel('Name:')
-        self.ent_name = QLineEdit()
+        self.qle_name = QLineEdit()
         lbl_wgt = ClickableLabel('Weight:')
-        self.ent_wgt = QLineEdit()
+        self.qle_wgt = QLineEdit()
         lbl_onoff = ClickableLabel('On/Off:')
-        self.ent_onoff = QLineEdit()
+        self.qle_onoff = QLineEdit()
         lbld_routput = ClickableLabel('Randomizer:')
-        self.ent_routput = QLineEdit()
+        self.qle_routput = QLineEdit()
 
         lbl_name.setStyleSheet("background-color: #D3D3D3;")
         lbl_wgt.setStyleSheet("background-color: #D3D3D3;")
@@ -683,13 +882,13 @@ class NextTask(QMainWindow):
         lbld_routput.setStyleSheet("background-color: #D3D3D3;")
 
         edit_layout_1.addWidget(lbl_name, 0, 0)
-        edit_layout_1.addWidget(self.ent_name, 0, 1)
+        edit_layout_1.addWidget(self.qle_name, 0, 1)
         edit_layout_1.addWidget(lbl_wgt, 0, 2)
-        edit_layout_1.addWidget(self.ent_wgt, 0, 3)
+        edit_layout_1.addWidget(self.qle_wgt, 0, 3)
         edit_layout_1.addWidget(lbl_onoff, 0, 4)
-        edit_layout_1.addWidget(self.ent_onoff, 0, 5)
+        edit_layout_1.addWidget(self.qle_onoff, 0, 5)
         edit_layout_1.addWidget(lbld_routput, 1, 0)
-        edit_layout_1.addWidget(self.ent_routput, 1, 1, 1, 5)
+        edit_layout_1.addWidget(self.qle_routput, 1, 1, 1, 5)
 
         # Bottom action buttons
         edit_frame_2 = QFrame()
@@ -728,7 +927,7 @@ class NextTask(QMainWindow):
             if not selection_ids:
                 self.txt_main.append('There is no task selected. Select a task in the task table.')
                 return
-            if len(selection_ids) > 1 and (not self.focused or self.ent_name in self.focused):
+            if len(selection_ids) > 1 and (not self.focused or self.qle_name in self.focused):
                 if QMessageBox.warning(self, 'Warning', 'Do you really want to give multiple tasks the same name?',
                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) != QMessageBox.Yes:
                     return
@@ -737,7 +936,7 @@ class NextTask(QMainWindow):
                        "onoff",
                        "randomizer"]
             changes = []
-            for n, entry in enumerate([self.ent_name, self.ent_wgt, self.ent_onoff]):
+            for n, entry in enumerate([self.qle_name, self.qle_wgt, self.qle_onoff]):
                 if not self.focused or entry in self.focused:
                     reg = re.match(patterns[n], entry.text())
                     if not reg:
@@ -745,20 +944,20 @@ class NextTask(QMainWindow):
                         entry.setFocus()
                         return
                     changes.append(columns[n])
-            if not self.focused or self.ent_routput in self.focused:
-                if not self.randomizer_check(self.ent_routput.text(), 2):
+            if not self.focused or self.qle_routput in self.focused:
+                if not self.randomizer_check(self.qle_routput.text(), 2):
                     return
                 changes.append("randomizer")
-            conn = sqlite3.connect('tasks.db')
+            conn = sqlite3.connect(app_dir / 'tasks.db')
             c = conn.cursor()
             command = f"UPDATE tasks SET {','.join([f"{change} = :{change}" for change in changes])} WHERE rowid = :rowid"
             for row in selection_ids:
                 c.execute(command, 
                           {
-                              'name': self.ent_name.text(),
-                              'weight': self.ent_wgt.text(),
-                              'onoff': self.ent_onoff.text(),
-                              'randomizer': self.ent_routput.text(),
+                              'name': self.qle_name.text(),
+                              'weight': self.qle_wgt.text(),
+                              'onoff': self.qle_onoff.text(),
+                              'randomizer': self.qle_routput.text(),
                               'rowid': row + 1
                           })
             command = f"SELECT * FROM tasks WHERE rowid in ({', '.join('?' for _ in selection_ids)})"
@@ -771,7 +970,7 @@ class NextTask(QMainWindow):
             conn.close()
 
         def add_task():
-            name = self.ent_name.text()
+            name = self.qle_name.text()
             for n, entry in enumerate(edit_frame_1.findChildren(QLineEdit)):
                 reg = re.match(patterns[n], entry.text())
                 if not reg:
@@ -794,9 +993,9 @@ class NextTask(QMainWindow):
                             m += 1
                             name = str(1 + m).join(name.rsplit(str(m), 1))
                         continue
-            if not self.randomizer_check(self.ent_routput.text(), 2):
+            if not self.randomizer_check(self.qle_routput.text(), 2):
                 return
-            conn = sqlite3.connect('tasks.db')
+            conn = sqlite3.connect(app_dir / 'tasks.db')
             c = conn.cursor()
             c.execute('''INSERT INTO tasks VALUES
                     (
@@ -809,17 +1008,17 @@ class NextTask(QMainWindow):
                 ''', {
                         'row_pos': str(self.tree_model.rowCount() + 1),
                         'name': name,
-                        'weight': self.ent_wgt.text(),
-                        'onoff': self.ent_onoff.text(),
-                        'randomizer': self.ent_routput.text(),
+                        'weight': self.qle_wgt.text(),
+                        'onoff': self.qle_onoff.text(),
+                        'randomizer': self.qle_routput.text(),
                     }
             )
             row_items = [
                 QStandardItem(str(self.tree_model.rowCount() + 1)),
                 QStandardItem(name),
-                QStandardItem(self.ent_wgt.text()),
-                QStandardItem(self.ent_onoff.text()),
-                QStandardItem(self.ent_routput.text()),
+                QStandardItem(self.qle_wgt.text()),
+                QStandardItem(self.qle_onoff.text()),
+                QStandardItem(self.qle_routput.text()),
             ]
             row_items[0].setData(c.lastrowid, Qt.ItemDataRole.UserRole)
             row_items[0].setData(self.tree_model.rowCount() + 1, Qt.ItemDataRole.UserRole + 1)
@@ -828,23 +1027,37 @@ class NextTask(QMainWindow):
             conn.close()
 
         def remove_selected():
-            proxy_indexes = self.tree.selectionModel().selectedRows()
-            selection = [self.proxy.mapToSource(pindex) for pindex in proxy_indexes]
+            if self.tree.isVisible():
+                db = 'tasks.db'
+                model = self.tree_model
+                selection_model = self.tree.selectionModel()
+
+                proxy_indexes = selection_model.selectedRows()
+                selection = [self.proxy.mapToSource(pindex) for pindex in proxy_indexes]
+            elif self.tree_completed.isVisible():
+                db = 'completed.db'
+                model = self.tree_model_completed
+                selection_model = self.tree_completed.selectionModel()
+
+                selection = selection_model.selectedRows()
+            else:
+                return
+        
             if not selection:
                 return
             if QMessageBox.question(self, 'Warning!', 'Delete the selected tasks?') != QMessageBox.Yes:
                 return
-            conn = sqlite3.connect('tasks.db')
+            conn = sqlite3.connect(app_dir / db)
             c = conn.cursor()
             rows = sorted({index.row() for index in selection}, reverse=True)
             for row in rows:
-                row_item = self.tree_model.item(row, 0)
+                row_item = model.item(row, 0)
                 rowid = int(row_item.data(Qt.ItemDataRole.UserRole))
                 c.execute('DELETE from tasks WHERE rowid=?', (rowid,))
-                self.tree_model.removeRow(row)
+                model.removeRow(row)
             conn.commit()
             conn.close()
-            arithmise(self.tree_model)
+            arithmise(model)
 
         def up():
             selection_model = self.tree.selectionModel()
@@ -937,8 +1150,15 @@ class NextTask(QMainWindow):
                 entry.setFocus()
                 entry.selectAll()
 
+        def open_folder(index):
+            if index.column() != 4:
+                return
+
+            subprocess.Popen(["xdg-open", self.tree_model_completed.item(index.row(), 4).data(Qt.ItemDataRole.UserRole)])
+
 
         # Connections
+        self.tree_completed.doubleClicked.connect(open_folder)
         bt_rl.clicked.connect(rl)
         bt_rd.clicked.connect(rd)
         bt_rt.clicked.connect(rt)
@@ -957,15 +1177,15 @@ class NextTask(QMainWindow):
         bt_hold.clicked.connect(hold)
         bt_tasks.clicked.connect(bt_call1)
         bt_completed_tasks.clicked.connect(bt_call2)
-        self.ent_name.returnPressed.connect(update_task)
-        self.ent_wgt.returnPressed.connect(update_task)
-        self.ent_onoff.returnPressed.connect(update_task)
-        self.ent_routput.returnPressed.connect(update_task)
+        self.qle_name.returnPressed.connect(update_task)
+        self.qle_wgt.returnPressed.connect(update_task)
+        self.qle_onoff.returnPressed.connect(update_task)
+        self.qle_routput.returnPressed.connect(update_task)
         self.tree.doubleClicked.connect(double_click)
 
 
         def create_databases():
-            conn = sqlite3.connect('tasks.db')
+            conn = sqlite3.connect(app_dir / 'tasks.db')
             c = conn.cursor()
             c.execute('''CREATE TABLE if not exists tasks (
                     row_pos integer,
@@ -976,18 +1196,20 @@ class NextTask(QMainWindow):
                     ''')
             conn.commit()
             conn.close()
-            conn = sqlite3.connect('completed.db')
+            conn = sqlite3.connect(app_dir / 'completed.db')
             c = conn.cursor()
             c.execute('''CREATE TABLE if not exists tasks (
                     name text,
                     task text,
+                    keywords text,
+                    folder_url text,
                     datetime text)
                     ''')
             conn.commit()
             conn.close()
 
         def query_database():
-            conn = sqlite3.connect('tasks.db')
+            conn = sqlite3.connect(app_dir / 'tasks.db')
             c = conn.cursor()
             c.execute('SELECT rowid, * FROM tasks') # rowid is first so it is task[0]
             tasks = c.fetchall()
@@ -999,7 +1221,7 @@ class NextTask(QMainWindow):
                     QStandardItem(task[2]),
                     QStandardItem(str(task[3])),
                     QStandardItem(str(task[4])),
-                    QStandardItem(task[5] if task[5] else 'Random [1-1000]'),
+                    QStandardItem(task[5] if task[5] else default_rizer),
                 ]
                 row_items[0].setData(task[0], Qt.ItemDataRole.UserRole)
                 row_items[0].setData(task[1], Qt.ItemDataRole.UserRole + 1)
@@ -1007,7 +1229,7 @@ class NextTask(QMainWindow):
                 row_items[3].setTextAlignment(Qt.AlignCenter)
                 self.tree_model.appendRow(row_items)
 
-            conn = sqlite3.connect('completed.db')
+            conn = sqlite3.connect(app_dir / 'completed.db')
             c = conn.cursor()
             c.execute('SELECT rowid, * FROM tasks')
             ctasks = c.fetchall()
@@ -1017,12 +1239,17 @@ class NextTask(QMainWindow):
                     QStandardItem(str(n + 1)),
                     QStandardItem(ctask[1]),
                     QStandardItem(ctask[2]),
-                    QStandardItem(datetime.fromisoformat(ctask[3]).strftime("%Y-%m-%d")),
+                    QStandardItem(ctask[3]),
+                    QStandardItem(''),
+                    QStandardItem(datetime.fromisoformat(ctask[5]).strftime("%Y-%m-%d")),
                 ]
                 row_items[0].setData(ctask[0], Qt.ItemDataRole.UserRole)
                 row_items[0].setData(n + 1, Qt.ItemDataRole.UserRole + 1)
                 row_items[2].setData(f"{ctask[1]}, {ctask[2]}", Qt.ItemDataRole.UserRole)
-                row_items[3].setData(datetime.fromisoformat(ctask[3]))
+                if any(Path(ctask[4]).iterdir()):
+                    row_items[4].setIcon(QIcon.fromTheme("document-open"))
+                row_items[4].setData(ctask[4], Qt.UserRole)
+                row_items[5].setData(datetime.fromisoformat(ctask[5]))
                 self.tree_model_completed.appendRow(row_items)
 
         create_databases()
@@ -1068,7 +1295,12 @@ class NextTask(QMainWindow):
             self.txt_main.append(f"You must edit the weights to be {weight}.")
 
     def select_all(self):
-        selection_model = self.tree.selectionModel()
+        if self.tree.isVisible():
+            selection_model = self.tree.selectionModel()
+        elif self.tree_completed.isVisible():
+            selection_model = self.tree_completed.selectionModel()
+        else:
+            return
 
         for row in range(self.tree_model.rowCount()):
             index = self.tree_model.index(row, 0)
@@ -1081,10 +1313,10 @@ class NextTask(QMainWindow):
                 )
 
     def clear_entries(self):
-        self.ent_name.setText('')
-        self.ent_wgt.setText('')
-        self.ent_onoff.setText('')
-        self.ent_routput.setText('')
+        self.qle_name.setText('')
+        self.qle_wgt.setText('')
+        self.qle_onoff.setText('')
+        self.qle_routput.setText('')
 
     def select_task(self):
         values = [
@@ -1095,11 +1327,11 @@ class NextTask(QMainWindow):
             for column in range(self.tree_model.columnCount())
         ]
         try:
-            self.ent_name.setText(values[1])
-            self.ent_name.setCursorPosition(0)
-            self.ent_wgt.setText(values[2])
-            self.ent_onoff.setText(values[3])
-            self.ent_routput.setText(values[4])
+            self.qle_name.setText(values[1])
+            self.qle_name.setCursorPosition(0)
+            self.qle_wgt.setText(values[2])
+            self.qle_onoff.setText(values[3])
+            self.qle_routput.setText(values[4])
         except IndexError:
             return
 
@@ -1203,24 +1435,24 @@ class NextTask(QMainWindow):
                             f"{repet.group("name")} [{', '.join([f'{repet2.group("name")}/{repet2.group("weight")}' if repet2.group("weight") else repet2.group("name") for repet2 in reg2])}]")
                 rizer = ', '.join(rizer)
                 if mode == (1,) or mode == (2,):
-                    self.ent_routput.setText(rizer)
+                    self.qle_routput.setText(rizer)
                 return rizer
             else:
                 if mode == (1,) or mode == (2,):
-                    self.ent_routput.setFocus()
+                    self.qle_routput.setFocus()
                 if mode == (1,):
                     QMessageBox.critical(self, 'Error', f"Unable to read input. At:\n{expl[3]}\nUsing default instead")
                 if mode == (2,):
                     QMessageBox.critical(self, 'Error', f"Unable to read input. At:\n{expl[3]}")
                     return
-        return 'Random [1-1000]'
+        return default_rizer
 
     def import_tasks(self, db):
-        fname, _ = QFileDialog.getOpenFileName(self, 'Open File', filter='Text Files (*.txt)')
+        fname, _ = QFileDialog.getOpenFileName(self, 'Open File', str(app_dir), filter='Text Files (*.txt)')
         if fname:
             try:
                 with open(fname, 'r', encoding='utf-8') as f:
-                    conn = sqlite3.connect(db)
+                    conn = sqlite3.connect(app_dir / db)
                     c = conn.cursor()
                     c.execute('SELECT * FROM tasks')
                     rows = c.fetchall()
@@ -1231,17 +1463,20 @@ class NextTask(QMainWindow):
                         for line in lines:
                             reg = re.match(pattern_import_tasks, line)
                             if reg and reg.group('name') not in cnames:
-                                rizer_in = self.randomizer_check(reg.group('rizer'), 3)
                                 row_pos_in = reg.group('row_pos')
-                                if int(row_pos_in) <= self.tree_model.rowCount():
+                                if row_pos_in is None or int(row_pos_in) <= self.tree_model.rowCount():
                                     row_pos_in = self.tree_model.rowCount() + 1
                                 name_in = reg.group('name')
-                                if not reg.group('options'):
-                                    weight_in = '1'
-                                    onoff_in = '1'
-                                else:
+                                if reg.group('options'):
                                     weight_in = reg.group('weight')
                                     onoff_in = reg.group('onoff')
+                                else:
+                                    weight_in = '1'
+                                    onoff_in = '1'
+                                if reg.group('rizer'):
+                                    rizer_in = self.randomizer_check(reg.group('rizer'), 3)
+                                else:
+                                    rizer_in = default_rizer
                                 c.execute('INSERT INTO tasks VALUES (:row_pos, :name, :weight, :onoff, :randomizer)',
                                           {
                                               'row_pos': row_pos_in,
@@ -1274,23 +1509,49 @@ class NextTask(QMainWindow):
                             if reg and reg.group('task') not in ctasks:
                                 name_in = reg.group('name')
                                 task_in = reg.group('task')
+                                keywords_in = reg.group('keywords')
                                 date_in = datetime.fromisoformat(reg.group('datetime'))
-                                c.execute('INSERT INTO tasks VALUES (:name, :task, :datetime)',
+                                c.execute('''INSERT INTO tasks VALUES (:name,
+                                                                       :task,
+                                                                       :keywords,
+                                                                       :folder_url,
+                                                                       :datetime)
+                                          ''',
                                           {
                                               'name': name_in,
                                               'task': task_in,
+                                              'keyword': keywords_in,
+                                              'folder_url': None,
                                               'datetime': reg.group('datetime')
                                           })
+
+                                rowid = c.lastrowid
+                                folder_url = self.notes_url / f'{rowid}'
+
+                                c.execute('''
+                                    UPDATE tasks
+                                    SET folder_url = :folder_url
+                                    WHERE rowid = :rowid
+                                ''', {
+                                    'folder_url': str(folder_url),
+                                    'rowid': rowid
+                                })
+
+                                folder_url.mkdir(exist_ok=True)
+
                                 row_items = [
                                     QStandardItem(str(self.tree_model_completed.rowCount() + 1)),
                                     QStandardItem(name_in),
                                     QStandardItem(task_in),
+                                    QStandardItem(keywords_in),
+                                    QStandardItem(''),
                                     QStandardItem(date_in.strftime("%Y-%m-%d")),
                                 ]
                                 row_items[0].setData(c.lastrowid, Qt.ItemDataRole.UserRole)
                                 row_items[0].setData(self.tree_model_completed.rowCount() + 1, Qt.ItemDataRole.UserRole + 1)
                                 row_items[2].setData(f"{name_in}, {task_in}", Qt.ItemDataRole.UserRole)
-                                row_items[3].setData(date_in, Qt.ItemDataRole.UserRole)
+                                row_items[4].setData(str(folder_url), Qt.UserRole)
+                                row_items[5].setData(date_in, Qt.ItemDataRole.UserRole)
                                 self.tree_model_completed.appendRow(row_items)
                                 ctasks.append(task_in)
                         self.lbl_score_all.setText('Completed: ' + str(self.tree_model_completed.rowCount()))
