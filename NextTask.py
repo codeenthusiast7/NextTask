@@ -1,7 +1,7 @@
 from pathlib import Path
 import os
 from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, 
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QDialog,
     QPushButton, QLabel, QLineEdit, QTextEdit, QTreeView, QFileDialog,
     QMessageBox, QSplitter, QFrame, QSizePolicy, QAbstractItemView
 )
@@ -33,7 +33,7 @@ patterns = [r"^(?P<name>[^,\n]+)$", r"^\s*(?P<weight>\d+)\s*$", r"^\s*(?P<onoff>
             r"(?P<match>(?P<name>[^\s,[]+[^\s[]*(?:\s+[^\s[]+)*)\s*(?:\[\s*(?P<num_lo>-?\d+)\s*-\s*(?P<num_hi>-?\d+)\s*\]|"
             r"\[\s*(?P<str_lo>[a-zA-Z]+)\s*-\s*(?P<str_hi>[a-zA-Z]+)\s*\]|\[(?P<choices>\s*[^,\n\]]+(?:\s*,\s*[^,\n\]]+)*\s*)\]))"]
 pattern_import_tasks = r"(?P<row_pos>\d+)\s*,\s*(?P<name>[^,\n]+)\s*,\s*(?P<options>(?P<weight>\d+)\s*,\s*(?P<onoff>0|1)\s*,\s*(?P<rizer>[^\n]+)*)?"
-pattern_import_ctasks = r"(?P<topic>[^,\n]+)\s*,\s*(?P<task>[^,\n]+)\s*,\s*(?P<datetime>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6})?"
+pattern_import_ctasks = r"(?P<name>[^,\n]+)\s*,\s*(?P<task>[^,\n]+)\s*,\s*(?P<datetime>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6})?"
 pattern_duplic_name = r"^.+\((?P<num_dupe>\d+)\)$"
 pattern_sample = r"\s*(?P<name>[^,\n\/]+)\s*(?:\/\s*(?P<weight>\d+))*"
 
@@ -96,6 +96,7 @@ def arithmise(model):
 
         if item.text() != str(row + 1):
             item.setText(str(row + 1))
+            item.setData(row + 1, Qt.ItemDataRole.UserRole + 1)
 
     if not w.movedRows:
         w.movedRows = True
@@ -160,8 +161,8 @@ def focus_lbl(_, lbl):
 class TaskSortModel(QSortFilterProxyModel):
     def lessThan(self, left, right):
         if left.column() == 0:
-            return left.data(Qt.ItemDataRole.UserRole) < right.data(
-                Qt.ItemDataRole.UserRole
+            return left.data(Qt.ItemDataRole.UserRole + 1) < right.data(
+                Qt.ItemDataRole.UserRole + 1
             )
 
         return super().lessThan(left, right)
@@ -264,6 +265,10 @@ class NextTask(QMainWindow):
 
         exit_action = file_menu.addAction('Exit')
         exit_action.triggered.connect(self.network)
+
+        edit_menu = menubar.addMenu('Edit')
+        find_weights_action = edit_menu.addAction('Find weights based on chance')
+        find_weights_action.triggered.connect(self.find_weights)
 
         help_menu = menubar.addAction('Help')
         help_menu.triggered.connect(lambda: QMessageBox.information(self, 'Help', helptext))
@@ -390,12 +395,17 @@ class NextTask(QMainWindow):
         self.tree_model = QStandardItemModel(0, 5)
         self.tree_model.setHorizontalHeaderLabels(["No.", "Name", "Weight", "On/Off", "Randomizer"])
         self.tree = TreeView()
-        right_layout.addWidget(self.tree)
-        proxy = TaskSortModel()
-        proxy.setSourceModel(self.tree_model)
         self.tree.setModel(self.tree_model)
-        self.tree.setModel(proxy)
+        self.tree.setColumnWidth(0, 40)
+        self.tree.setColumnWidth(1, 200)
+        self.tree.setColumnWidth(2, 50)
+        self.tree.setColumnWidth(3, 50)
+        right_layout.addWidget(self.tree)
+        self.proxy = TaskSortModel()
+        self.proxy.setSourceModel(self.tree_model)
+        self.tree.setModel(self.proxy)
         self.tree.setSortingEnabled(True)
+        self.tree.sortByColumn(0, Qt.SortOrder.AscendingOrder)
         self.tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.tree.setIndentation(0)
         self.tree.setAlternatingRowColors(True)
@@ -403,14 +413,17 @@ class NextTask(QMainWindow):
         self.tree.setEditTriggers(QTreeView.NoEditTriggers)
 
         self.tree_model_completed = QStandardItemModel(0, 4)
-        self.tree_model_completed.setHorizontalHeaderLabels(["No.", "Topic", "Task", "Date"])
+        self.tree_model_completed.setHorizontalHeaderLabels(["No.", "Name", "Task", "Date"])
         self.tree_completed = TreeView()
+        self.tree_completed.setModel(self.tree_model_completed)
+        self.tree_completed.setColumnWidth(0, 40)
+        self.tree_completed.setColumnWidth(1, 200)
         right_layout.addWidget(self.tree_completed)
         proxy_completed = TaskSortModel()
         proxy_completed.setSourceModel(self.tree_model_completed)
-        self.tree_completed.setModel(self.tree_model_completed)
         self.tree_completed.setModel(proxy_completed)
         self.tree_completed.setSortingEnabled(True)
+        self.tree_completed.sortByColumn(0, Qt.SortOrder.AscendingOrder)
         self.tree_completed.setAlternatingRowColors(True)
         self.tree_completed.setUniformRowHeights(True)
         self.tree_completed.setEditTriggers(QTreeView.NoEditTriggers)
@@ -418,7 +431,6 @@ class NextTask(QMainWindow):
 
         splitter.setStretchFactor(0, 3)
         splitter.setStretchFactor(1, 2)
-
 
         # R output
         routput_frame = QFrame()
@@ -594,9 +606,9 @@ class NextTask(QMainWindow):
             conn = sqlite3.connect('completed.db')
             c = conn.cursor()
             task_stripped = self.memory[4][(len(self.memory[0]) + 2):].lstrip()
-            c.execute('INSERT INTO tasks VALUES (:topic, :task, :datetime)',
+            c.execute('INSERT INTO tasks VALUES (:name, :task, :datetime)',
                       {
-                          'topic': self.memory[0],
+                          'name': self.memory[0],
                           'task': task_stripped,
                           'datetime': datetime.now().isoformat()
                       })
@@ -709,15 +721,22 @@ class NextTask(QMainWindow):
         edit_frame_2.setVisible(False)
 
 
-        def update_task(_=None):
-            selection = [index.row() for index in self.tree.selectionModel().selectedRows()]
-            if not selection:
+        def update_task():
+            proxy_indexes = self.tree.selectionModel().selectedRows()
+            source_indexes = [self.proxy.mapToSource(pindex) for pindex in proxy_indexes]
+            selection_ids = [int(self.tree_model.itemFromIndex(sindex).text()) - 1 for sindex in source_indexes]
+            if not selection_ids:
                 self.txt_main.append('There is no task selected. Select a task in the task table.')
                 return
-            columns = ["name = :name",
-                       "weight = :weight",
-                       "onoff = :onoff"]
-            change = []
+            if len(selection_ids) > 1 and (not self.focused or self.ent_name in self.focused):
+                if QMessageBox.warning(self, 'Warning', 'Do you really want to give multiple tasks the same name?',
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) != QMessageBox.Yes:
+                    return
+            columns = ["name",
+                       "weight",
+                       "onoff",
+                       "randomizer"]
+            changes = []
             for n, entry in enumerate([self.ent_name, self.ent_wgt, self.ent_onoff]):
                 if not self.focused or entry in self.focused:
                     reg = re.match(patterns[n], entry.text())
@@ -725,31 +744,31 @@ class NextTask(QMainWindow):
                         QMessageBox.critical(self, 'Error', 'Unable to read input. At:\n' + expl[n])
                         entry.setFocus()
                         return
-                    change.append(columns[n])
+                    changes.append(columns[n])
             if not self.focused or self.ent_routput in self.focused:
                 if not self.randomizer_check(self.ent_routput.text(), 2):
                     return
-                change.append("randomizer = :randomizer")
+                changes.append("randomizer")
             conn = sqlite3.connect('tasks.db')
             c = conn.cursor()
-            command = "UPDATE tasks SET %s WHERE rowid = :rowid" % ','.join(change)
-            for row in selection:
+            command = f"UPDATE tasks SET {','.join([f"{change} = :{change}" for change in changes])} WHERE rowid = :rowid"
+            for row in selection_ids:
                 c.execute(command, 
                           {
                               'name': self.ent_name.text(),
                               'weight': self.ent_wgt.text(),
                               'onoff': self.ent_onoff.text(),
                               'randomizer': self.ent_routput.text(),
-                              'rowid': row
+                              'rowid': row + 1
                           })
-            command = f"SELECT rowid, * FROM tasks WHERE rowid in ({', '.join('?' for _ in selection)})"
-            c.execute(command, selection)
-            tasks = c.fetchall()
+            command = f"SELECT * FROM tasks WHERE rowid in ({', '.join('?' for _ in selection_ids)})"
+            c.execute(command, [rowid + 1 for rowid in selection_ids])
+            for task in c.fetchall():
+                for column, value in enumerate(task[1:]):
+                    if columns[column] in changes:
+                        self.tree_model.item(task[0] - 1, column + 1).setText(str(value))
             conn.commit()
             conn.close()
-            for task in tasks:
-                for column, value in enumerate(task[1:]):
-                    self.tree_model.item(task[0], column + 1).setText(str(value))
 
         def add_task():
             name = self.ent_name.text()
@@ -809,7 +828,8 @@ class NextTask(QMainWindow):
             conn.close()
 
         def remove_selected():
-            selection = self.tree.selectionModel().selectedRows()
+            proxy_indexes = self.tree.selectionModel().selectedRows()
+            selection = [self.proxy.mapToSource(pindex) for pindex in proxy_indexes]
             if not selection:
                 return
             if QMessageBox.question(self, 'Warning!', 'Delete the selected tasks?') != QMessageBox.Yes:
@@ -829,49 +849,85 @@ class NextTask(QMainWindow):
         def up():
             selection_model = self.tree.selectionModel()
             selection = selection_model.selectedRows()
+
             if selection:
+                header = self.tree.header()
+                sort_column = None
+                sort_order = None
+
+                if header.isSortIndicatorShown():
+                    sort_column = header.sortIndicatorSection()
+                    sort_order = header.sortIndicatorOrder()
+                    if sort_order == Qt.SortOrder.DescendingOrder:
+                        selection = [self.proxy.mapToSource(pindex) for pindex in selection]
+                else:
+                    return
+
+                if sort_column != 0:
+                    self.txt_main.append("Moving rows only works when 'No.' column is sorted.")
+                    return
+                
                 for index in selection:
                     row = index.row()
-                    parent = index.parent()
                     items = self.tree_model.takeRow(row)
-                    self.tree_model.insertRow(row - 1, items)
-                    new_index = self.tree_model.index(row - 1, index.column(), parent)
+
+                    if sort_order == Qt.SortOrder.AscendingOrder:
+                        items[0].setText(str(row))
+                        items[0].setData(row, Qt.ItemDataRole.UserRole + 1)
+                        self.tree_model.insertRow(row - 1, items)
+                    else:
+                        items[0].setText(str(row + 2))
+                        items[0].setData(row + 2, Qt.ItemDataRole.UserRole + 1)
+                        self.tree_model.insertRow(row + 1, items)
+                        index = self.proxy.mapFromSource(self.tree_model.index(row + 1, index.column(), index.parent()))
                     selection_model.select(
-                        new_index,
+                        index,
                         QItemSelectionModel.SelectionFlag.Select
                         | QItemSelectionModel.SelectionFlag.Rows
                     )
-                arithmise(self.tree_model)
+                    arithmise(self.tree_model)
 
         def down():
             selection_model = self.tree.selectionModel()
             selection = selection_model.selectedRows()
+
             if selection:
-                for index in reversed(selection):
+                header = self.tree.header()
+                sort_column = None
+                sort_order = None
+
+                if header.isSortIndicatorShown():
+                    sort_column = header.sortIndicatorSection()
+                    sort_order = header.sortIndicatorOrder()
+                    if sort_order == Qt.SortOrder.DescendingOrder:
+                        selection = [self.proxy.mapToSource(pindex) for pindex in selection]
+                else:
+                    return
+
+                if sort_column != 0:
+                    self.txt_main.append("Moving rows only works when 'No.' column is sorted.")
+                    return
+                
+                for index in selection:
                     row = index.row()
-                    parent = index.parent()
                     items = self.tree_model.takeRow(row)
-                    self.tree_model.insertRow(row + 1, items)
-                    new_index = self.tree_model.index(row + 1, index.column(), parent)
+
+                    if sort_order == Qt.SortOrder.AscendingOrder:
+                        items[0].setText(str(row + 2))
+                        items[0].setData(row + 2, Qt.ItemDataRole.UserRole + 1)
+                        self.tree_model.insertRow(row + 1, items)
+                        index = self.tree_model.index(row + 1, index.column(), index.parent())
+                    else:
+                        items[0].setText(str(row))
+                        items[0].setData(row, Qt.ItemDataRole.UserRole + 1)
+                        self.tree_model.insertRow(row - 1, items)
+                        index = self.proxy.mapFromSource(self.tree_model.index(row - 1, index.column(), index.parent()))
                     selection_model.select(
-                        new_index,
+                        index,
                         QItemSelectionModel.SelectionFlag.Select
                         | QItemSelectionModel.SelectionFlag.Rows
                     )
-                arithmise(self.tree_model)
-
-        def select_all():
-            selection_model = self.tree.selectionModel()
-
-            for row in range(self.tree_model.rowCount()):
-                index = self.tree_model.index(row, 0)
-
-                if not selection_model.isSelected(index):
-                    selection_model.select(
-                        index,
-                        QItemSelectionModel.SelectionFlag.Select |
-                        QItemSelectionModel.SelectionFlag.Rows
-                    )
+                    arithmise(self.tree_model)
 
         def double_click(index):  # focuses the entry when clicking a value in the treeview
             if index.isValid():
@@ -895,7 +951,7 @@ class NextTask(QMainWindow):
         bt_up.clicked.connect(up)
         bt_down.clicked.connect(down)
         bt_clear.clicked.connect(self.clear_entries)
-        bt_selectall.clicked.connect(select_all)
+        bt_selectall.clicked.connect(self.select_all)
         bt_left.clicked.connect(lambda: move(-1))
         bt_right.clicked.connect(lambda: move(1))
         bt_hold.clicked.connect(hold)
@@ -923,7 +979,7 @@ class NextTask(QMainWindow):
             conn = sqlite3.connect('completed.db')
             c = conn.cursor()
             c.execute('''CREATE TABLE if not exists tasks (
-                    topic text,
+                    name text,
                     task text,
                     datetime text)
                     ''')
@@ -969,12 +1025,60 @@ class NextTask(QMainWindow):
                 row_items[3].setData(datetime.fromisoformat(ctask[3]))
                 self.tree_model_completed.appendRow(row_items)
 
-
         create_databases()
         query_database()
 
         self.lbl_score_all.setText(f'Completed: {self.tree_model_completed.rowCount()}')
 
+
+    def find_weights(self):
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Enter chance")
+
+        layout = QVBoxLayout(dialog)
+
+        entry = QLineEdit()
+        layout.addWidget(entry)
+
+        button = QPushButton("OK")
+        layout.addWidget(button)
+
+        button.clicked.connect(dialog.accept)
+
+        if dialog.exec() and entry.text():
+            proxy_indexes = self.tree.selectionModel().selectedRows()
+            source_indexes = [self.proxy.mapToSource(pindex) for pindex in proxy_indexes]
+            selection_ids = [int(self.tree_model.itemFromIndex(sindex).text()) - 1 for sindex in source_indexes]
+            if not selection_ids:
+                QMessageBox.critical(self, 'Error', 'No rows were selected')
+                return
+
+            chance = float(entry.text())
+            if not 0.0 < chance < 1.0:
+                QMessageBox.critical(self, 'Error', 'Entry chance must be between 0 and 1')
+                return
+
+            n = len(selection_ids)
+            rw = 0
+            for row in range(self.tree_model.rowCount()):
+                if row not in selection_ids:
+                    rw += int(self.tree_model.item(row, 2).text())
+
+            weight = rw/n*chance/(1-chance)
+            self.txt_main.append(f"You must edit the weights to be {weight}.")
+
+    def select_all(self):
+        selection_model = self.tree.selectionModel()
+
+        for row in range(self.tree_model.rowCount()):
+            index = self.tree_model.index(row, 0)
+
+            if not selection_model.isSelected(index):
+                selection_model.select(
+                    index,
+                    QItemSelectionModel.SelectionFlag.Select |
+                    QItemSelectionModel.SelectionFlag.Rows
+                )
 
     def clear_entries(self):
         self.ent_name.setText('')
@@ -1001,7 +1105,8 @@ class NextTask(QMainWindow):
 
     def motion(self, _):
         pos = self.tree.viewport().mapFromGlobal(QCursor.pos())
-        index = self.tree.indexAt(pos)
+        pindex = self.tree.indexAt(pos)
+        index = self.proxy.mapToSource(pindex)
 
         if not index.isValid():
             return
@@ -1048,7 +1153,9 @@ class NextTask(QMainWindow):
         self.active_task = task
 
     def escape(self):
-        for index in self.tree.selectionModel().selectedRows():
+        proxy_indexes = self.tree.selectionModel().selectedRows()
+        selection = [self.proxy.mapToSource(pindex) for pindex in proxy_indexes]
+        for index in selection:
             self.tree.selectionModel().select(
                 index,
                 QItemSelectionModel.SelectionFlag.Deselect |
@@ -1057,7 +1164,8 @@ class NextTask(QMainWindow):
 
     def click_press(self, _):
         pos = self.tree.viewport().mapFromGlobal(QCursor.pos())
-        index = self.tree.indexAt(pos)
+        pindex = self.tree.indexAt(pos)
+        index = self.proxy.mapToSource(pindex)
 
         self.first_task = self.active_task = index.row()
         self.tree.motion_enabled = True
@@ -1164,24 +1272,24 @@ class NextTask(QMainWindow):
                         for line in lines:
                             reg = re.match(pattern_import_ctasks, line)
                             if reg and reg.group('task') not in ctasks:
-                                topic_in = reg.group('topic')
+                                name_in = reg.group('name')
                                 task_in = reg.group('task')
                                 date_in = datetime.fromisoformat(reg.group('datetime'))
-                                c.execute('INSERT INTO tasks VALUES (:topic, :task, :datetime)',
+                                c.execute('INSERT INTO tasks VALUES (:name, :task, :datetime)',
                                           {
-                                              'topic': topic_in,
+                                              'name': name_in,
                                               'task': task_in,
                                               'datetime': reg.group('datetime')
                                           })
                                 row_items = [
                                     QStandardItem(str(self.tree_model_completed.rowCount() + 1)),
-                                    QStandardItem(topic_in),
+                                    QStandardItem(name_in),
                                     QStandardItem(task_in),
                                     QStandardItem(date_in.strftime("%Y-%m-%d")),
                                 ]
                                 row_items[0].setData(c.lastrowid, Qt.ItemDataRole.UserRole)
                                 row_items[0].setData(self.tree_model_completed.rowCount() + 1, Qt.ItemDataRole.UserRole + 1)
-                                row_items[2].setData(f"{topic_in}, {task_in}", Qt.ItemDataRole.UserRole)
+                                row_items[2].setData(f"{name_in}, {task_in}", Qt.ItemDataRole.UserRole)
                                 row_items[3].setData(date_in, Qt.ItemDataRole.UserRole)
                                 self.tree_model_completed.appendRow(row_items)
                                 ctasks.append(task_in)
