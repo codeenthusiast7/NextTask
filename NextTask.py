@@ -100,6 +100,10 @@ pattern_import_tasks = re.compile(
                        )
 pattern_import_ctasks = re.compile(
                         r"""
+                        (?:
+                            (?P<sql_ID>\d+)
+                            \s*,\s*
+                        )?
                         (?P<name>
                             [^,\n\s]
                             (?:[^,\n]*[^,\n\s])?
@@ -148,8 +152,6 @@ Patterns:   {expl[0]}
 If you want to edit the completed tasks you can:\n1) Export .txt file\n2) Delete completed.db\n3) Open \
 the exported .txt file with a notepad\n4) Make your edits\n5) Import the new txt file\nThe pattern needs to be the \
 same as before, for them to appear.
-
-version 2.0
 """
 
 button_style_tabs = """
@@ -736,9 +738,9 @@ class NextTask(QMainWindow):
                 if selected:
                     fnames = selected
                     if len(selected) > 1:
-                        button_files.setText('Files selected!')
+                        button_files.setText('Files selected')
                     else:
-                        button_files.setText('File selected!')
+                        button_files.setText('File selected')
 
             button_files.clicked.connect(store_files)
             button_cancel.clicked.connect(dialog.reject)
@@ -801,8 +803,8 @@ class NextTask(QMainWindow):
             row_items[0].setData(self.tree_model_completed.rowCount() + 1, Qt.ItemDataRole.UserRole + 1)
             row_items[2].setData(full_task, Qt.ItemDataRole.UserRole)
             if fnames:
-                row_items[4].setIcon(QIcon.fromTheme("document-open"))
-            row_items[4].setIcon(QIcon.fromTheme("document-open"))
+                row_items[4].setIcon(QIcon("icons/folder.svg"))
+            row_items[4].setIcon(QIcon("icons/folder.svg"))
             row_items[4].setData(str(folder_url), Qt.ItemDataRole.UserRole)
             row_items[5].setData(datetime_obj, Qt.ItemDataRole.UserRole)
             conn.commit()
@@ -810,7 +812,7 @@ class NextTask(QMainWindow):
             self.tree_model_completed.appendRow(row_items)
             lbl_score.setText(f"Completed this session: {self.score}")
             self.lbl_score_all.setText(f'Completed: {self.tree_model_completed.rowCount()}')
-            self.txt_main.append('Completed!')
+            self.txt_main.append('Completed')
 
         def move(n):
             if not self.memory:
@@ -1128,18 +1130,80 @@ class NextTask(QMainWindow):
                 arithmise(self.tree_model)
 
         def double_click(index):  # focuses the entry when clicking a value in the treeview
-            if index.isValid():
-                self.doubleClicked = True
-                entries = edit_frame_1.findChildren(QLineEdit)
-                entry = entries[index.column() - 1]
-                entry.setFocus()
-                entry.selectAll()
-
-        def open_folder(index):
-            if index.column() != 4:
+            if not index.isValid():
                 return
 
-            subprocess.Popen(["xdg-open", self.tree_model_completed.item(index.row(), 4).data(Qt.ItemDataRole.UserRole)])
+            self.doubleClicked = True
+            entries = edit_frame_1.findChildren(QLineEdit)
+            column = index.column()
+            if column == 0:
+                entry = entries[0]
+            else:
+                entry = entries[column - 1]
+            entry.setFocus()
+            entry.selectAll()
+
+        def open_folder(index):
+            if not index.isValid() or index.column() != 4:
+                return
+
+            index = proxy_completed.mapToSource(index)
+
+            path = self.tree_model_completed.item(index.row(), 4).data(Qt.ItemDataRole.UserRole)
+            if Path(path).is_dir():
+                subprocess.Popen(["xdg-open", path])
+            else:
+                dialog = QDialog(self)
+                dialog.setWindowTitle("Upload files menu")
+                layout = QVBoxLayout(dialog)
+
+                frame_up = QFrame(dialog)
+                frame_down = QFrame(dialog)
+                layout.addWidget(frame_up)
+                layout.addWidget(frame_down)
+
+                layout_up = QGridLayout(frame_up)
+                layout_down = QHBoxLayout(frame_down)
+
+                lbl_files = QLabel("Upload files ")
+                button_files = QPushButton("Upload")
+                layout_up.addWidget(lbl_files, 0, 0)
+                layout_up.addWidget(button_files, 0, 1)
+
+                button_cancel = QPushButton("Cancel")
+                button_ok = QPushButton("OK")
+                layout_down.addWidget(button_cancel)
+                layout_down.addWidget(button_ok)
+
+                fnames = []
+
+                def store_files():
+                    nonlocal fnames
+
+                    selected, _ = QFileDialog.getOpenFileNames(self, 'Select Files', str(app_dir))
+
+                    if selected:
+                        fnames = selected
+                        if len(selected) > 1:
+                            button_files.setText('Files selected')
+                        else:
+                            button_files.setText('File selected')
+
+                button_files.clicked.connect(store_files)
+                button_cancel.clicked.connect(dialog.reject)
+                button_ok.clicked.connect(dialog.accept)
+
+                dialog.adjustSize()
+
+                if dialog.exec() == QDialog.DialogCode.Rejected:
+                    return
+
+                rowid = self.tree_model_completed.item(index.row(), 4).data(Qt.ItemDataRole.UserRole)
+                folder_url = self.notes_url / f'{rowid}'
+                if fnames:
+                    folder_url.mkdir(exist_ok=True)
+                    for fname in fnames:
+                        shutil.move(fname, folder_url)
 
 
         # Connections
@@ -1237,8 +1301,8 @@ class NextTask(QMainWindow):
                 row_items[0].setData(ctask[0], Qt.ItemDataRole.UserRole)
                 row_items[0].setData(n + 1, Qt.ItemDataRole.UserRole + 1)
                 row_items[2].setData(f"{ctask[1]}, {ctask[2]}", Qt.ItemDataRole.UserRole)
-                if any(Path(ctask[4]).iterdir()):
-                    row_items[4].setIcon(QIcon.fromTheme("document-open"))
+                if Path(ctask[4]).is_dir():
+                    row_items[4].setIcon(QIcon("icons/folder.svg"))
                 row_items[4].setData(ctask[4], Qt.ItemDataRole.UserRole)
                 row_items[5].setData(datetime_obj, Qt.ItemDataRole.UserRole)
                 self.tree_model_completed.appendRow(row_items)
@@ -1462,6 +1526,7 @@ class NextTask(QMainWindow):
                         f.write('\n')
                 elif tree == self.tree_completed:
                     for row_items in row_items_list:
+                        f.write(f"{row_items[0].data(Qt.ItemDataRole.UserRole)}, ")
                         f.write(", ".join([item.text() for item in row_items[1:3]]))
                         f.write(f", [{row_items[3].text()}]")
                         if row_items[5]:
@@ -1470,7 +1535,68 @@ class NextTask(QMainWindow):
                     
 
     def import_tasks(self, db):
-        fname, _ = QFileDialog.getOpenFileName(self, 'Open File', str(app_dir), filter='Text Files (*.txt)')
+        if db == 'completed.db':
+            dialog = QDialog(self)
+            dialog.setWindowTitle("Import menu")
+            layout = QVBoxLayout(dialog)
+
+            frame_up = QFrame(dialog)
+            frame_down = QFrame(dialog)
+            layout.addWidget(frame_up)
+            layout.addWidget(frame_down)
+
+            layout_up = QGridLayout(frame_up)
+            layout_down = QHBoxLayout(frame_down)
+
+            lbl_file = QLabel("Select file ")
+            button_file = QPushButton("Select")
+            layout_up.addWidget(lbl_file, 0, 0)
+            layout_up.addWidget(button_file, 0, 1)
+
+            lbl_notes = QLabel("Select 'Notes' folder (optional) ")
+            button_notes = QPushButton("Select")
+            layout_up.addWidget(lbl_notes, 1, 0)
+            layout_up.addWidget(button_notes, 1, 1)
+
+            button_cancel = QPushButton("Cancel")
+            button_ok = QPushButton("OK")
+            layout_down.addWidget(button_cancel)
+            layout_down.addWidget(button_ok)
+
+            fname = ""
+            notes_import = None
+
+            def select_file():
+                nonlocal fname
+
+                selected, _ = QFileDialog.getOpenFileName(self, 'Select file', str(app_dir))
+
+                if selected:
+                    fname = selected
+                    button_file.setText('File selected')
+
+            def select_notes():
+                nonlocal notes_import
+
+                folder = QFileDialog.getExistingDirectory(self, "Select 'Notes' Folder", str(app_dir))
+
+                if folder:
+                    notes_import = Path(folder)
+                    button_notes.setText('Folder selected')
+
+            button_file.clicked.connect(select_file)
+            button_notes.clicked.connect(select_notes)
+
+            button_cancel.clicked.connect(dialog.reject)
+            button_ok.clicked.connect(dialog.accept)
+
+            dialog.adjustSize()
+
+            if dialog.exec() == QDialog.DialogCode.Rejected:
+                return
+        else:
+            fname, _ = QFileDialog.getOpenFileName(self, 'Open File', str(app_dir), filter='Text Files (*.txt)')
+
         if fname:
             try:
                 with open(fname, 'r', encoding='utf-8') as f:
@@ -1529,6 +1655,7 @@ class NextTask(QMainWindow):
                         for line in lines:
                             reg = re.match(pattern_import_ctasks, line)
                             if reg and reg.group('task') not in ctasks:
+                                sql_ID = reg.group('sql_ID')  # for matching the Notes folder
                                 name = reg.group('name')
                                 task = reg.group('task')
                                 keywords = reg.group('keywords')
@@ -1565,7 +1692,10 @@ class NextTask(QMainWindow):
                                     'rowid': rowid
                                 })
 
-                                folder_url.mkdir(exist_ok=True)
+                                if notes_import:
+                                    folder_url.mkdir(exist_ok=True)
+                                    for file in (notes_import / sql_ID).iterdir():
+                                        shutil.move(file, folder_url)
 
                                 row_items = [
                                     QStandardItem(str(self.tree_model_completed.rowCount() + 1)),
@@ -1575,7 +1705,7 @@ class NextTask(QMainWindow):
                                     QStandardItem(''),
                                     QStandardItem(datetime_strf),
                                 ]
-                                row_items[0].setData(c.lastrowid, Qt.ItemDataRole.UserRole)
+                                row_items[0].setData(rowid, Qt.ItemDataRole.UserRole)
                                 row_items[0].setData(self.tree_model_completed.rowCount() + 1, Qt.ItemDataRole.UserRole + 1)
                                 row_items[2].setData(f"{name}, {task}", Qt.ItemDataRole.UserRole)
                                 row_items[4].setData(str(folder_url), Qt.ItemDataRole.UserRole)
