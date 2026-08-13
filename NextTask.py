@@ -89,7 +89,7 @@ pattern_import_tasks = re.compile(
                             \s*,\s*
                             (?P<weight>\d+)
                             \s*,\s*
-                            (?P<onoff>0|1)
+                            (?P<onoff>[01])
                             (?:
                                 \s*,\s*
                                 (?P<rizer>[^\n]+)
@@ -113,13 +113,13 @@ pattern_import_ctasks = re.compile(
                         (?:
                             \s*,\s*\[\s*
                             (?P<keywords>
-                                [^,\n\]\s]
-                                (?:[^,\n\]]*[^,\n\]\s])?
+                                [^\n\]\s]
+                                (?:[^\n\]]*[^\n\]\s])?
                                 (?:
-                                    \s*,\s*[^,\n\]\s]
-                                    (?:[^,\n\]]*[^,\n\]\s])?
+                                    \s*,\s*[^\n\]\s]
+                                    (?:[^\n\]]*[^\n\]\s])?
                                 )*
-                            )
+                            )?
                             \s*\]
                         )?
                         (?:
@@ -200,10 +200,10 @@ def arithmise(model):
         w.movedRows = True
 
 
-def addup(w):
+def addup(chars):
     s = 0
     t = 1
-    for ch in w.lower()[::-1]:
+    for ch in chars.lower()[::-1]:
         s += (ord(ch) - 96) * t
         t *= 26
     return s
@@ -221,25 +221,6 @@ def strup(ns):
         s = s[:i] + ascii_lowercase[ns // 26 ** (e - i) - 1] + s[i + 1:]
         ns = ns % 26 ** (e - i)
     return s
-
-
-def export_tasks(db):
-    fname, _ = QFileDialog.getSaveFileName(w, 'Save File', str(app_dir), filter='Text Files (*.txt)')
-    if fname:
-        with open(fname, 'w', encoding='utf-8') as f:
-            conn = sqlite3.connect(app_dir / db)
-            c = conn.cursor()
-            if db == 'tasks.db':
-                c.execute('SELECT * FROM tasks')
-                tasks = c.fetchall()
-                tasks.sort(key=lambda task: int(task[0]))
-                for task in tasks:
-                    f.write(f"{task[0]}, {task[1]}, {task[2]}, {task[3]}, {task[4]}\n")
-            elif db == 'completed.db':
-                c.execute('SELECT * FROM tasks')
-                for ctask in c.fetchall():
-                    f.write(f"{ctask[0]}, {ctask[1]}, {ctask[2]}\n")
-            conn.close()
 
 
 def focus_lbl(_, lbl):
@@ -350,7 +331,7 @@ class NextTask(QMainWindow):
         import_tasks_action.triggered.connect(lambda: self.import_tasks('tasks.db'))
 
         export_tasks_action = file_menu.addAction('Export tasks')
-        export_tasks_action.triggered.connect(lambda: export_tasks('tasks.db'))
+        export_tasks_action.triggered.connect(lambda: self.export_tasks(self.tree))
 
         file_menu.addSeparator()
 
@@ -358,7 +339,7 @@ class NextTask(QMainWindow):
         import_completed_action.triggered.connect(lambda: self.import_tasks('completed.db'))
 
         export_completed_action = file_menu.addAction('Export completed tasks')
-        export_completed_action.triggered.connect(lambda: export_tasks('completed.db'))
+        export_completed_action.triggered.connect(lambda: self.export_tasks(self.tree_completed))
 
         file_menu.addSeparator()
 
@@ -535,6 +516,8 @@ class NextTask(QMainWindow):
         self.tree_completed.setModel(proxy_completed)
         self.tree_completed.setSortingEnabled(True)
         self.tree_completed.sortByColumn(0, Qt.SortOrder.AscendingOrder)
+        self.tree_completed.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.tree_completed.setIndentation(0)
         self.tree_completed.setAlternatingRowColors(True)
         self.tree_completed.setUniformRowHeights(True)
         self.tree_completed.setEditTriggers(QTreeView.NoEditTriggers)
@@ -773,6 +756,7 @@ class NextTask(QMainWindow):
             self.score += 1
             conn = sqlite3.connect(app_dir / 'completed.db')
             c = conn.cursor()
+            datetime_obj = datetime.now()
             c.execute('''INSERT INTO tasks VALUES (
                                                     :name,
                                                     :task,
@@ -785,7 +769,7 @@ class NextTask(QMainWindow):
                           'task': task_stripped,
                           'keywords': qle_keywords.text(),
                           'folder_url': None,
-                          'datetime': datetime.now().isoformat()
+                          'datetime': datetime_obj.isoformat()
             })
 
             rowid = c.lastrowid
@@ -800,10 +784,10 @@ class NextTask(QMainWindow):
                 'rowid': rowid
             })
 
-            folder_url.mkdir(exist_ok=True)
-
-            for fname in fnames:
-                shutil.move(fname, folder_url)
+            if fnames:
+                folder_url.mkdir(exist_ok=True)
+                for fname in fnames:
+                    shutil.move(fname, folder_url)
 
             row_items = [
                 QStandardItem(str(self.tree_model_completed.rowCount() + 1)),
@@ -811,7 +795,7 @@ class NextTask(QMainWindow):
                 QStandardItem(task_stripped),
                 QStandardItem(qle_keywords.text()),
                 QStandardItem(''),
-                QStandardItem(datetime.now().strftime("%Y-%m-%d")),
+                QStandardItem(datetime_obj.strftime("%Y-%m-%d")),
             ]
             row_items[0].setData(c.lastrowid, Qt.ItemDataRole.UserRole)
             row_items[0].setData(self.tree_model_completed.rowCount() + 1, Qt.ItemDataRole.UserRole + 1)
@@ -819,8 +803,8 @@ class NextTask(QMainWindow):
             if fnames:
                 row_items[4].setIcon(QIcon.fromTheme("document-open"))
             row_items[4].setIcon(QIcon.fromTheme("document-open"))
-            row_items[4].setData(str(folder_url), Qt.UserRole)
-            row_items[5].setData(datetime.now(), Qt.ItemDataRole.UserRole)
+            row_items[4].setData(str(folder_url), Qt.ItemDataRole.UserRole)
+            row_items[5].setData(datetime_obj, Qt.ItemDataRole.UserRole)
             conn.commit()
             conn.close()
             self.tree_model_completed.appendRow(row_items)
@@ -1065,8 +1049,6 @@ class NextTask(QMainWindow):
 
             if selection:
                 header = self.tree.header()
-                sort_column = None
-                sort_order = None
 
                 if header.isSortIndicatorShown():
                     sort_column = header.sortIndicatorSection()
@@ -1098,7 +1080,7 @@ class NextTask(QMainWindow):
                         QItemSelectionModel.SelectionFlag.Select
                         | QItemSelectionModel.SelectionFlag.Rows
                     )
-                    arithmise(self.tree_model)
+                arithmise(self.tree_model)
 
         def down():
             selection_model = self.tree.selectionModel()
@@ -1106,8 +1088,6 @@ class NextTask(QMainWindow):
 
             if selection:
                 header = self.tree.header()
-                sort_column = None
-                sort_order = None
 
                 if header.isSortIndicatorShown():
                     sort_column = header.sortIndicatorSection()
@@ -1120,8 +1100,8 @@ class NextTask(QMainWindow):
                 if sort_column != 0:
                     self.txt_main.append("Moving rows only works when 'No.' column is sorted.")
                     return
-                
-                for index in selection:
+
+                for index in reversed(selection):
                     row = index.row()
                     items = self.tree_model.takeRow(row)
 
@@ -1129,18 +1109,23 @@ class NextTask(QMainWindow):
                         items[0].setText(str(row + 2))
                         items[0].setData(row + 2, Qt.ItemDataRole.UserRole + 1)
                         self.tree_model.insertRow(row + 1, items)
-                        index = self.tree_model.index(row + 1, index.column(), index.parent())
                     else:
                         items[0].setText(str(row))
                         items[0].setData(row, Qt.ItemDataRole.UserRole + 1)
                         self.tree_model.insertRow(row - 1, items)
-                        index = self.proxy.mapFromSource(self.tree_model.index(row - 1, index.column(), index.parent()))
+
+                if sort_order == Qt.SortOrder.AscendingOrder:
+                    selection = [self.proxy.mapFromSource(self.tree_model.index(index.row() + 1, index.column(), index.parent())) for index in selection]
+                else:
+                    selection = [self.proxy.mapFromSource(self.tree_model.index(index.row() - 1, index.column(), index.parent())) for index in selection]
+                
+                for index in selection:
                     selection_model.select(
                         index,
                         QItemSelectionModel.SelectionFlag.Select
                         | QItemSelectionModel.SelectionFlag.Rows
                     )
-                    arithmise(self.tree_model)
+                arithmise(self.tree_model)
 
         def double_click(index):  # focuses the entry when clicking a value in the treeview
             if index.isValid():
@@ -1158,7 +1143,6 @@ class NextTask(QMainWindow):
 
 
         # Connections
-        self.tree_completed.doubleClicked.connect(open_folder)
         bt_rl.clicked.connect(rl)
         bt_rd.clicked.connect(rd)
         bt_rt.clicked.connect(rt)
@@ -1182,6 +1166,7 @@ class NextTask(QMainWindow):
         self.qle_onoff.returnPressed.connect(update_task)
         self.qle_routput.returnPressed.connect(update_task)
         self.tree.doubleClicked.connect(double_click)
+        self.tree_completed.doubleClicked.connect(open_folder)
 
 
         def create_databases():
@@ -1235,21 +1220,27 @@ class NextTask(QMainWindow):
             ctasks = c.fetchall()
             conn.close()
             for n, ctask in enumerate(ctasks):
+                if ctask[5]:
+                    datetime_obj = datetime.fromisoformat(ctask[5])
+                    datetime_strf = datetime_obj.strftime("%Y-%m-%d")
+                else:
+                    datetime_obj = None
+                    datetime_strf = None
                 row_items = [
                     QStandardItem(str(n + 1)),
                     QStandardItem(ctask[1]),
                     QStandardItem(ctask[2]),
                     QStandardItem(ctask[3]),
                     QStandardItem(''),
-                    QStandardItem(datetime.fromisoformat(ctask[5]).strftime("%Y-%m-%d")),
+                    QStandardItem(datetime_strf),
                 ]
                 row_items[0].setData(ctask[0], Qt.ItemDataRole.UserRole)
                 row_items[0].setData(n + 1, Qt.ItemDataRole.UserRole + 1)
                 row_items[2].setData(f"{ctask[1]}, {ctask[2]}", Qt.ItemDataRole.UserRole)
                 if any(Path(ctask[4]).iterdir()):
                     row_items[4].setIcon(QIcon.fromTheme("document-open"))
-                row_items[4].setData(ctask[4], Qt.UserRole)
-                row_items[5].setData(datetime.fromisoformat(ctask[5]))
+                row_items[4].setData(ctask[4], Qt.ItemDataRole.UserRole)
+                row_items[5].setData(datetime_obj, Qt.ItemDataRole.UserRole)
                 self.tree_model_completed.appendRow(row_items)
 
         create_databases()
@@ -1447,6 +1438,37 @@ class NextTask(QMainWindow):
                     return
         return default_rizer
 
+    def export_tasks(self, tree):
+        fname, _ = QFileDialog.getSaveFileName(w, 'Save File', str(app_dir), filter='Text Files (*.txt)')
+        if fname:
+            if not fname.lower().endswith('.txt'):
+                fname += '.txt'
+
+            with open(fname, 'w', encoding='utf-8') as f:
+                model = tree.model().sourceModel()
+                row_items_list = [
+                    [
+                        model.item(row, column)
+                        for column in range(model.columnCount())
+                    ]
+                    for row in range(model.rowCount())
+                ]
+
+                row_items_list.sort(key=lambda row_items: int(row_items[0].text()))
+
+                if tree == self.tree:
+                    for row_items in row_items_list:
+                        f.write(", ".join([item.text() for item in row_items]))
+                        f.write('\n')
+                elif tree == self.tree_completed:
+                    for row_items in row_items_list:
+                        f.write(", ".join([item.text() for item in row_items[1:3]]))
+                        f.write(f", [{row_items[3].text()}]")
+                        if row_items[5]:
+                            f.write(f", {row_items[5].data(Qt.ItemDataRole.UserRole).isoformat()}")
+                        f.write('\n')
+                    
+
     def import_tasks(self, db):
         fname, _ = QFileDialog.getOpenFileName(self, 'Open File', str(app_dir), filter='Text Files (*.txt)')
         if fname:
@@ -1463,41 +1485,41 @@ class NextTask(QMainWindow):
                         for line in lines:
                             reg = re.match(pattern_import_tasks, line)
                             if reg and reg.group('name') not in cnames:
-                                row_pos_in = reg.group('row_pos')
-                                if row_pos_in is None or int(row_pos_in) <= self.tree_model.rowCount():
-                                    row_pos_in = self.tree_model.rowCount() + 1
-                                name_in = reg.group('name')
+                                row_pos = reg.group('row_pos')
+                                if row_pos is None or int(row_pos) <= self.tree_model.rowCount():
+                                    row_pos = self.tree_model.rowCount() + 1
+                                name = reg.group('name')
                                 if reg.group('options'):
-                                    weight_in = reg.group('weight')
-                                    onoff_in = reg.group('onoff')
+                                    weight = reg.group('weight')
+                                    onoff = reg.group('onoff')
                                 else:
-                                    weight_in = '1'
-                                    onoff_in = '1'
+                                    weight = '1'
+                                    onoff = '1'
                                 if reg.group('rizer'):
-                                    rizer_in = self.randomizer_check(reg.group('rizer'), 3)
+                                    rizer = self.randomizer_check(reg.group('rizer'), 3)
                                 else:
-                                    rizer_in = default_rizer
+                                    rizer = default_rizer
                                 c.execute('INSERT INTO tasks VALUES (:row_pos, :name, :weight, :onoff, :randomizer)',
                                           {
-                                              'row_pos': row_pos_in,
-                                              'name': name_in,
-                                              'weight': weight_in,
-                                              'onoff': onoff_in,
-                                              'randomizer': rizer_in
+                                              'row_pos': row_pos,
+                                              'name': name,
+                                              'weight': weight,
+                                              'onoff': onoff,
+                                              'randomizer': rizer
                                           })
                                 row_items = [
-                                    QStandardItem(row_pos_in),
-                                    QStandardItem(name_in),
-                                    QStandardItem(weight_in),
-                                    QStandardItem(onoff_in),
-                                    QStandardItem(rizer_in),
+                                    QStandardItem(row_pos),
+                                    QStandardItem(name),
+                                    QStandardItem(weight),
+                                    QStandardItem(onoff),
+                                    QStandardItem(rizer),
                                 ]
                                 row_items[0].setData(c.lastrowid, Qt.ItemDataRole.UserRole)
-                                row_items[0].setData(int(row_pos_in), Qt.ItemDataRole.UserRole + 1)
+                                row_items[0].setData(int(row_pos), Qt.ItemDataRole.UserRole + 1)
                                 row_items[2].setTextAlignment(Qt.AlignCenter)
                                 row_items[3].setTextAlignment(Qt.AlignCenter)
                                 row_items_list.append(row_items)
-                                cnames.append(name_in)
+                                cnames.append(name)
                         if row_items_list:
                             row_items_list.sort(key=lambda row_items: int(row_items[0].text()))
                             for row_items in row_items_list:
@@ -1507,10 +1529,16 @@ class NextTask(QMainWindow):
                         for line in lines:
                             reg = re.match(pattern_import_ctasks, line)
                             if reg and reg.group('task') not in ctasks:
-                                name_in = reg.group('name')
-                                task_in = reg.group('task')
-                                keywords_in = reg.group('keywords')
-                                date_in = datetime.fromisoformat(reg.group('datetime'))
+                                name = reg.group('name')
+                                task = reg.group('task')
+                                keywords = reg.group('keywords')
+                                datetime_iso = reg.group('datetime')
+                                if datetime_iso:
+                                    datetime_obj = datetime.fromisoformat(datetime_iso)
+                                    datetime_strf = datetime_obj.strftime("%Y-%m-%d")
+                                else:
+                                    datetime_obj = None
+                                    datetime_strf = None
                                 c.execute('''INSERT INTO tasks VALUES (:name,
                                                                        :task,
                                                                        :keywords,
@@ -1518,11 +1546,11 @@ class NextTask(QMainWindow):
                                                                        :datetime)
                                           ''',
                                           {
-                                              'name': name_in,
-                                              'task': task_in,
-                                              'keyword': keywords_in,
+                                              'name': name,
+                                              'task': task,
+                                              'keywords': keywords,
                                               'folder_url': None,
-                                              'datetime': reg.group('datetime')
+                                              'datetime': datetime_iso
                                           })
 
                                 rowid = c.lastrowid
@@ -1541,19 +1569,19 @@ class NextTask(QMainWindow):
 
                                 row_items = [
                                     QStandardItem(str(self.tree_model_completed.rowCount() + 1)),
-                                    QStandardItem(name_in),
-                                    QStandardItem(task_in),
-                                    QStandardItem(keywords_in),
+                                    QStandardItem(name),
+                                    QStandardItem(task),
+                                    QStandardItem(keywords),
                                     QStandardItem(''),
-                                    QStandardItem(date_in.strftime("%Y-%m-%d")),
+                                    QStandardItem(datetime_strf),
                                 ]
                                 row_items[0].setData(c.lastrowid, Qt.ItemDataRole.UserRole)
                                 row_items[0].setData(self.tree_model_completed.rowCount() + 1, Qt.ItemDataRole.UserRole + 1)
-                                row_items[2].setData(f"{name_in}, {task_in}", Qt.ItemDataRole.UserRole)
-                                row_items[4].setData(str(folder_url), Qt.UserRole)
-                                row_items[5].setData(date_in, Qt.ItemDataRole.UserRole)
+                                row_items[2].setData(f"{name}, {task}", Qt.ItemDataRole.UserRole)
+                                row_items[4].setData(str(folder_url), Qt.ItemDataRole.UserRole)
+                                row_items[5].setData(datetime_obj, Qt.ItemDataRole.UserRole)
                                 self.tree_model_completed.appendRow(row_items)
-                                ctasks.append(task_in)
+                                ctasks.append(task)
                         self.lbl_score_all.setText('Completed: ' + str(self.tree_model_completed.rowCount()))
                     conn.commit()
                     conn.close()
