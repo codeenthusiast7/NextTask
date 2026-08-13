@@ -17,7 +17,8 @@ import shutil
 import subprocess
 
 if getattr(sys, 'frozen', False):
-    app_dir = Path(sys.executable).resolve().parent
+    # Path(sys.executable).resolve().parent points to App/
+    app_dir = Path(sys._MEIPASS)  # points to App/_internal/
 else:
     app_dir = Path(__file__).resolve().parent
 
