@@ -774,8 +774,8 @@ class NextTask(QMainWindow):
                           'datetime': datetime_obj.isoformat()
             })
 
-            rowid = c.lastrowid
-            folder_url = self.notes_url / f'{rowid}'
+            rowid = c.lastrowid  # .../Notes
+            folder_url = self.notes_url / f'{rowid}'  # .../Notes/1
 
             c.execute('''
                 UPDATE tasks
@@ -803,9 +803,8 @@ class NextTask(QMainWindow):
             row_items[0].setData(self.tree_model_completed.rowCount() + 1, Qt.ItemDataRole.UserRole + 1)
             row_items[2].setData(full_task, Qt.ItemDataRole.UserRole)
             if fnames:
-                row_items[4].setIcon(QIcon("icons/folder.svg"))
-            row_items[4].setIcon(QIcon("icons/folder.svg"))
-            row_items[4].setData(str(folder_url), Qt.ItemDataRole.UserRole)
+                row_items[4].setIcon(QIcon(str(app_dir / "icons" / "folder.svg")))
+            row_items[4].setData(folder_url, Qt.ItemDataRole.UserRole)
             row_items[5].setData(datetime_obj, Qt.ItemDataRole.UserRole)
             conn.commit()
             conn.close()
@@ -1200,10 +1199,16 @@ class NextTask(QMainWindow):
 
                 rowid = self.tree_model_completed.item(index.row(), 4).data(Qt.ItemDataRole.UserRole)
                 folder_url = self.notes_url / f'{rowid}'
+
                 if fnames:
+                    if not Path(folder_url).is_dir():
+                        self.tree_model_completed.item(index.row(), 4).setIcon(QIcon(str(app_dir / "icons" / "folder.svg")))
+
                     folder_url.mkdir(exist_ok=True)
                     for fname in fnames:
                         shutil.move(fname, folder_url)
+
+                
 
 
         # Connections
@@ -1302,7 +1307,7 @@ class NextTask(QMainWindow):
                 row_items[0].setData(n + 1, Qt.ItemDataRole.UserRole + 1)
                 row_items[2].setData(f"{ctask[1]}, {ctask[2]}", Qt.ItemDataRole.UserRole)
                 if Path(ctask[4]).is_dir():
-                    row_items[4].setIcon(QIcon("icons/folder.svg"))
+                    row_items[4].setIcon(QIcon(str(app_dir / "icons" / "folder.svg")))
                 row_items[4].setData(ctask[4], Qt.ItemDataRole.UserRole)
                 row_items[5].setData(datetime_obj, Qt.ItemDataRole.UserRole)
                 self.tree_model_completed.appendRow(row_items)
