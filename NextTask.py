@@ -133,6 +133,10 @@ pattern_import_ctasks = re.compile(
                                 \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}
                             )
                         )?
+                        (?:
+                            \s*,\s*
+                            (?P<completitions>\d+)
+                        )?
                         """,
                         re.VERBOSE,
                         )
@@ -310,7 +314,9 @@ class NextTask(QMainWindow):
         self.mem_index = 0
         self.active_task = None
         self.first_task = None
+        self.last_completed_task = None
         self.score = 0
+        self.total_score = 0
         self.focused = []
         self.held = []
         self.movedRows = False
@@ -508,7 +514,7 @@ class NextTask(QMainWindow):
         self.tree.setEditTriggers(QTreeView.NoEditTriggers)
 
         self.tree_model_completed = QStandardItemModel(0, 4)
-        self.tree_model_completed.setHorizontalHeaderLabels(["No.", "Name", "Task", "Keywords", "Files", "Date"])
+        self.tree_model_completed.setHorizontalHeaderLabels(["No.", "Name", "Task", "Keywords", "Files", "Date", "Completitions"])
         self.tree_completed = TreeView()
         self.tree_completed.setModel(self.tree_model_completed)
         self.tree_completed.setColumnWidth(0, 40)
@@ -589,6 +595,16 @@ class NextTask(QMainWindow):
         mid_layout.addWidget(bt_edit)
 
 
+        def handle_output(output):
+            qle_current_task.setText(output)
+            row_found = find_in_tree_completed(output)
+            if row_found is not None:
+                times_done = self.tree_model_completed.item(row_found, 6).text()
+                output += f'\nTask (No. {self.tree_model_completed.item(row_found, 0).text()}) has already been completed {times_done} time'
+                if times_done != '1':
+                    output += 's'
+            self.txt_main.append(output)
+
         def rl():
             if not self.memory:
                 return rt()
@@ -615,10 +631,7 @@ class NextTask(QMainWindow):
                     elif choices:
                         pass
                 output += f", {name}: {self.mem_output[k]}"
-            qle_current_task.setText(output)
-            if find_in_tree_completed(output):
-                output += ' is already completed'
-            self.txt_main.append(output)
+            handle_output(output)
 
         def rd():
             if not self.memory:
@@ -659,10 +672,7 @@ class NextTask(QMainWindow):
                                                                 weights=[int(choice.group('weight')) if choice.group('weight') else 1 for choice in
                                                                         choices])[0]
                 output += f", {name}: {self.mem_output[k]}"
-            qle_current_task.setText(output)
-            if find_in_tree_completed(output):
-                output += ' is already completed'
-            self.txt_main.append(output)
+            handle_output(output)
 
         def rt():
             if self.tree_model.rowCount() == 0:
@@ -697,121 +707,149 @@ class NextTask(QMainWindow):
                 self.txt_main.append("No task found")
                 return
             full_task = reg.group('full_task')
-            if find_in_tree_completed(full_task):
-                self.txt_main.append('Task is already completed')
-                return
+            row_found = find_in_tree_completed(full_task)
+            
+            if row_found is not None:
+                if self.tree_model_completed.item(row_found, 0).text() == self.last_completed_task:
+                    if QMessageBox.question(self, 'Confirm', 'Complete the same task again?') != QMessageBox.Yes:
+                        return
 
-            dialog = QDialog(self)
-            dialog.setWindowTitle("Complete menu")
-            layout = QVBoxLayout(dialog)
+                completitions = int(self.tree_model_completed.item(row_found, 6).text()) + 1
 
-            frame_up = QFrame(dialog)
-            frame_down = QFrame(dialog)
-            layout.addWidget(frame_up)
-            layout.addWidget(frame_down)
+                conn = sqlite3.connect(app_dir / 'completed.db')
+                c = conn.cursor()
+                c.execute('''
+                    UPDATE tasks
+                    SET completitions = :completitions
+                    WHERE rowid = :rowid
+                ''', {
+                    'completitions': completitions,
+                    'rowid': self.tree_model_completed.item(row_found, 0).data(Qt.ItemDataRole.UserRole)
+                })
+                conn.commit()
+                conn.close()
+                
+                self.tree_model_completed.item(row_found, 6).setText(str(completitions))
+                self.last_completed_task = self.tree_model_completed.item(row_found, 0).text()
+            else:
+                dialog = QDialog(self)
+                dialog.setWindowTitle("Complete menu")
+                layout = QVBoxLayout(dialog)
 
-            layout_up = QGridLayout(frame_up)
-            layout_down = QHBoxLayout(frame_down)
+                frame_up = QFrame(dialog)
+                frame_down = QFrame(dialog)
+                layout.addWidget(frame_up)
+                layout.addWidget(frame_down)
 
-            lbl_keywords = QLabel("Keywords ")
-            qle_keywords = QLineEdit()
-            qle_keywords.setMaxLength(100)
-            layout_up.addWidget(lbl_keywords, 0, 0)
-            layout_up.addWidget(qle_keywords, 0, 1)
+                layout_up = QGridLayout(frame_up)
+                layout_down = QHBoxLayout(frame_down)
 
-            lbl_files = QLabel("Store files ")
-            button_files = QPushButton("Upload")
-            layout_up.addWidget(lbl_files, 1, 0)
-            layout_up.addWidget(button_files, 1, 1)
+                lbl_keywords = QLabel("Keywords ")
+                qle_keywords = QLineEdit()
+                qle_keywords.setMaxLength(100)
+                layout_up.addWidget(lbl_keywords, 0, 0)
+                layout_up.addWidget(qle_keywords, 0, 1)
 
-            button_cancel = QPushButton("Cancel")
-            button_ok = QPushButton("OK")
-            layout_down.addWidget(button_cancel)
-            layout_down.addWidget(button_ok)
+                lbl_files = QLabel("Store files ")
+                button_files = QPushButton("Upload")
+                layout_up.addWidget(lbl_files, 1, 0)
+                layout_up.addWidget(button_files, 1, 1)
 
-            fnames = []
+                button_cancel = QPushButton("Cancel")
+                button_ok = QPushButton("OK")
+                layout_down.addWidget(button_cancel)
+                layout_down.addWidget(button_ok)
 
-            def store_files():
-                nonlocal fnames
+                fnames = []
 
-                selected, _ = QFileDialog.getOpenFileNames(self, 'Select Files', str(app_dir))
+                def store_files():
+                    nonlocal fnames
 
-                if selected:
-                    fnames = selected
-                    if len(selected) > 1:
-                        button_files.setText('Files selected')
-                    else:
-                        button_files.setText('File selected')
+                    selected, _ = QFileDialog.getOpenFileNames(self, 'Select Files', str(app_dir))
 
-            button_files.clicked.connect(store_files)
-            button_cancel.clicked.connect(dialog.reject)
-            button_ok.clicked.connect(dialog.accept)
+                    if selected:
+                        fnames = selected
+                        if len(selected) > 1:
+                            button_files.setText('Files selected')
+                        else:
+                            button_files.setText('File selected')
 
-            dialog.adjustSize()
+                button_files.clicked.connect(store_files)
+                button_cancel.clicked.connect(dialog.reject)
+                button_ok.clicked.connect(dialog.accept)
 
-            if dialog.exec() == QDialog.DialogCode.Rejected:
-                return
+                dialog.adjustSize()
 
-            name = reg.group('name')
-            task_stripped = reg.group('task')
-            if task_stripped is None:
-                task_stripped = ""
+                if dialog.exec() == QDialog.DialogCode.Rejected:
+                    return
+
+                name = reg.group('name')
+                task_stripped = reg.group('task')
+                if task_stripped is None:
+                    task_stripped = ""
+                conn = sqlite3.connect(app_dir / 'completed.db')
+                c = conn.cursor()
+                datetime_obj = datetime.now()
+                c.execute('''INSERT INTO tasks VALUES (
+                                                        :name,
+                                                        :task,
+                                                        :keywords,
+                                                        :folder_url,
+                                                        :datetime,
+                                                        :completitions
+                                                    )
+                        ''', {
+                            'name': name,
+                            'task': task_stripped,
+                            'keywords': qle_keywords.text(),
+                            'folder_url': None,
+                            'datetime': datetime_obj.isoformat(),
+                            'completitions': 1
+                })
+
+                rowid = c.lastrowid
+                folder_url = self.notes_url / f'{rowid}'  # .../Notes/1
+
+                c.execute('''
+                    UPDATE tasks
+                    SET folder_url = :folder_url
+                    WHERE rowid = :rowid
+                ''', {
+                    'folder_url': str(folder_url),
+                    'rowid': rowid
+                })
+
+                if fnames:
+                    folder_url.mkdir(exist_ok=True)
+                    for fname in fnames:
+                        shutil.move(fname, folder_url)
+
+                row_items = [
+                    QStandardItem(str(self.tree_model_completed.rowCount() + 1)),
+                    QStandardItem(name),
+                    QStandardItem(task_stripped),
+                    QStandardItem(qle_keywords.text()),
+                    QStandardItem(''),
+                    QStandardItem(datetime_obj.strftime("%Y-%m-%d")),
+                    QStandardItem('1')
+                ]
+                row_items[0].setData(rowid, Qt.ItemDataRole.UserRole)
+                row_items[0].setData(self.tree_model_completed.rowCount() + 1, Qt.ItemDataRole.UserRole + 1)
+                row_items[2].setData(full_task, Qt.ItemDataRole.UserRole)
+                if fnames:
+                    row_items[4].setIcon(QIcon(str(app_dir / "icons" / "folder.svg")))
+                row_items[4].setData(folder_url, Qt.ItemDataRole.UserRole)
+                row_items[5].setData(datetime_obj, Qt.ItemDataRole.UserRole)
+                row_items[6].setTextAlignment(Qt.AlignCenter)
+                conn.commit()
+                conn.close()
+                self.tree_model_completed.appendRow(row_items)
+                self.last_completed_task = row_items[0].text()
+
             self.score += 1
-            conn = sqlite3.connect(app_dir / 'completed.db')
-            c = conn.cursor()
-            datetime_obj = datetime.now()
-            c.execute('''INSERT INTO tasks VALUES (
-                                                    :name,
-                                                    :task,
-                                                    :keywords,
-                                                    :folder_url,
-                                                    :datetime
-                                                  )
-                      ''', {
-                          'name': name,
-                          'task': task_stripped,
-                          'keywords': qle_keywords.text(),
-                          'folder_url': None,
-                          'datetime': datetime_obj.isoformat()
-            })
-
-            rowid = c.lastrowid  # .../Notes
-            folder_url = self.notes_url / f'{rowid}'  # .../Notes/1
-
-            c.execute('''
-                UPDATE tasks
-                SET folder_url = :folder_url
-                WHERE rowid = :rowid
-            ''', {
-                'folder_url': str(folder_url),
-                'rowid': rowid
-            })
-
-            if fnames:
-                folder_url.mkdir(exist_ok=True)
-                for fname in fnames:
-                    shutil.move(fname, folder_url)
-
-            row_items = [
-                QStandardItem(str(self.tree_model_completed.rowCount() + 1)),
-                QStandardItem(name),
-                QStandardItem(task_stripped),
-                QStandardItem(qle_keywords.text()),
-                QStandardItem(''),
-                QStandardItem(datetime_obj.strftime("%Y-%m-%d")),
-            ]
-            row_items[0].setData(c.lastrowid, Qt.ItemDataRole.UserRole)
-            row_items[0].setData(self.tree_model_completed.rowCount() + 1, Qt.ItemDataRole.UserRole + 1)
-            row_items[2].setData(full_task, Qt.ItemDataRole.UserRole)
-            if fnames:
-                row_items[4].setIcon(QIcon(str(app_dir / "icons" / "folder.svg")))
-            row_items[4].setData(folder_url, Qt.ItemDataRole.UserRole)
-            row_items[5].setData(datetime_obj, Qt.ItemDataRole.UserRole)
-            conn.commit()
-            conn.close()
-            self.tree_model_completed.appendRow(row_items)
             lbl_score.setText(f"Completed this session: {self.score}")
-            self.lbl_score_all.setText(f'Completed: {self.tree_model_completed.rowCount()}')
+            self.total_score += 1
+            self.lbl_score_all.setText(f'Completed: {self.total_score}')
             self.txt_main.append('Completed')
 
         def move(n):
@@ -840,8 +878,8 @@ class NextTask(QMainWindow):
         def find_in_tree_completed(task):
             for row in range(self.tree_model_completed.rowCount()):
                 if self.tree_model_completed.item(row, 2).data(Qt.ItemDataRole.UserRole) == task:
-                    return True
-            return False
+                    return row
+            return None
 
 
         # Editor frames for add/edit
@@ -1209,8 +1247,6 @@ class NextTask(QMainWindow):
                     for fname in fnames:
                         shutil.move(fname, folder_url)
 
-                
-
 
         # Connections
         bt_rl.clicked.connect(rl)
@@ -1258,7 +1294,8 @@ class NextTask(QMainWindow):
                     task text,
                     keywords text,
                     folder_url text,
-                    datetime text)
+                    datetime text,
+                    completitions integer)
                     ''')
             conn.commit()
             conn.close()
@@ -1296,6 +1333,7 @@ class NextTask(QMainWindow):
                 else:
                     datetime_obj = None
                     datetime_strf = None
+                self.total_score += ctask[6]
                 row_items = [
                     QStandardItem(str(n + 1)),
                     QStandardItem(ctask[1]),
@@ -1303,6 +1341,7 @@ class NextTask(QMainWindow):
                     QStandardItem(ctask[3]),
                     QStandardItem(''),
                     QStandardItem(datetime_strf),
+                    QStandardItem(str(ctask[6])),
                 ]
                 row_items[0].setData(ctask[0], Qt.ItemDataRole.UserRole)
                 row_items[0].setData(n + 1, Qt.ItemDataRole.UserRole + 1)
@@ -1311,12 +1350,13 @@ class NextTask(QMainWindow):
                     row_items[4].setIcon(QIcon(str(app_dir / "icons" / "folder.svg")))
                 row_items[4].setData(ctask[4], Qt.ItemDataRole.UserRole)
                 row_items[5].setData(datetime_obj, Qt.ItemDataRole.UserRole)
+                row_items[6].setTextAlignment(Qt.AlignCenter)
                 self.tree_model_completed.appendRow(row_items)
 
         create_databases()
         query_database()
 
-        self.lbl_score_all.setText(f'Completed: {self.tree_model_completed.rowCount()}')
+        self.lbl_score_all.setText(f'Completed: {self.total_score}')
 
 
     def find_weights(self):
@@ -1537,6 +1577,7 @@ class NextTask(QMainWindow):
                         f.write(f", [{row_items[3].text()}]")
                         if row_items[5]:
                             f.write(f", {row_items[5].data(Qt.ItemDataRole.UserRole).isoformat()}")
+                        f.write(f", {row_items[6].text()}")
                         f.write('\n')
                     
 
@@ -1672,18 +1713,22 @@ class NextTask(QMainWindow):
                                 else:
                                     datetime_obj = None
                                     datetime_strf = None
+                                completitions = reg.group('completitions')
+                                self.total_score += completitions
                                 c.execute('''INSERT INTO tasks VALUES (:name,
                                                                        :task,
                                                                        :keywords,
                                                                        :folder_url,
-                                                                       :datetime)
+                                                                       :datetime,
+                                                                       :completitions)
                                           ''',
                                           {
                                               'name': name,
                                               'task': task,
                                               'keywords': keywords,
                                               'folder_url': None,
-                                              'datetime': datetime_iso
+                                              'datetime': datetime_iso,
+                                              'completitions': completitions
                                           })
 
                                 rowid = c.lastrowid
@@ -1710,15 +1755,17 @@ class NextTask(QMainWindow):
                                     QStandardItem(keywords),
                                     QStandardItem(''),
                                     QStandardItem(datetime_strf),
+                                    QStandardItem(completitions),
                                 ]
                                 row_items[0].setData(rowid, Qt.ItemDataRole.UserRole)
                                 row_items[0].setData(self.tree_model_completed.rowCount() + 1, Qt.ItemDataRole.UserRole + 1)
                                 row_items[2].setData(f"{name}, {task}", Qt.ItemDataRole.UserRole)
                                 row_items[4].setData(str(folder_url), Qt.ItemDataRole.UserRole)
                                 row_items[5].setData(datetime_obj, Qt.ItemDataRole.UserRole)
+                                row_items[6].setTextAlignment(Qt.AlignCenter)
                                 self.tree_model_completed.appendRow(row_items)
                                 ctasks.append(task)
-                        self.lbl_score_all.setText('Completed: ' + str(self.tree_model_completed.rowCount()))
+                        self.lbl_score_all.setText('Completed: ' + str(self.total_score))
                     conn.commit()
                     conn.close()
             except FileNotFoundError:
