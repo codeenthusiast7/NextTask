@@ -35,9 +35,9 @@ fmt.setForeground(QColor("blue"))
 default_fmt = QTextCharFormat()
 default_fmt.setForeground(QColor("black"))
 
-patterns = [r"^(?P<name>[^,\n\s](?:[^,\n]*[^,\n\s])?)$",
-            r"^\s*(?P<weight>\d+)\s*$",
-            r"^\s*(?P<onoff>0|1)\s*$",
+patterns = [r"^\s*(?P<target>[^,\n\s](?:[^,\n]*[^,\n\s])?)$",
+            r"^\s*(?P<target>\d+)\s*$",
+            r"^\s*(?P<target>0|1)\s*$",
             re.compile(
             r"""
             (?P<match>
@@ -1019,8 +1019,9 @@ class NextTask(QMainWindow):
                     QMessageBox.warning(self, 'Error', 'Unable to read input.\n' + expl[n])
                     entry.setFocus()
                     return
+                entry.setText(reg.group("target"))
                 if n == 0:
-                    name = reg.group("name")
+                    name = entry.text()
                     names = [self.tree_model.item(row, 1).text() for row in range(self.tree_model.rowCount())]
                     if name in names:
                         m = 0
@@ -1035,7 +1036,8 @@ class NextTask(QMainWindow):
                             m += 1
                             name = str(1 + m).join(name.rsplit(str(m), 1))
                         continue
-            rizer = self.randomizer_check(self.qle_routput.text(), 1)
+
+            self.qle_routput.setText(self.randomizer_check(self.qle_routput.text(), 1))
             conn = sqlite3.connect(app_dir / 'tasks.db')
             c = conn.cursor()
             c.execute('''INSERT INTO tasks VALUES
@@ -1051,7 +1053,7 @@ class NextTask(QMainWindow):
                         'name': name,
                         'weight': self.qle_wgt.text(),
                         'onoff': self.qle_onoff.text(),
-                        'randomizer': rizer,
+                        'randomizer': self.qle_routput.text(),
                     }
             )
             row_items = [
@@ -1059,7 +1061,7 @@ class NextTask(QMainWindow):
                 QStandardItem(name),
                 QStandardItem(self.qle_wgt.text()),
                 QStandardItem(self.qle_onoff.text()),
-                QStandardItem(rizer),
+                QStandardItem(self.qle_routput.text()),
             ]
             row_items[0].setData(c.lastrowid, Qt.ItemDataRole.UserRole)
             row_items[0].setData(self.tree_model.rowCount() + 1, Qt.ItemDataRole.UserRole + 1)
@@ -1546,7 +1548,6 @@ class NextTask(QMainWindow):
                 QMessageBox.warning(self, 'Error', f"Unable to read randomizer input.\n{expl[3]}"
                     + ("\nUsing default instead" if mode == 1 else "")
                 )
-                return
             return default_rizer if mode in (1, 3) else None
 
         rizer = []
