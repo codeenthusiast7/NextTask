@@ -5,7 +5,7 @@ from PySide6.QtWidgets import (
     QMessageBox, QSplitter, QFrame, QSizePolicy, QAbstractItemView
 )
 from PySide6.QtGui import QFont, QColor, QTextCursor, QTextCharFormat, QStandardItemModel, QStandardItem, QCursor, QIcon
-from PySide6.QtCore import Qt, QItemSelectionModel, QSortFilterProxyModel
+from PySide6.QtCore import Qt, QItemSelectionModel, QSortFilterProxyModel, QObject, Signal
 import sys
 import sqlite3
 import random
@@ -244,6 +244,22 @@ def focus_lbl(_, lbl):
         w.focused.remove(entry)
 
 
+class ErrorRedirector(QObject):
+    text_written = Signal(str)
+
+    def __init__(self, original_stderr):
+        super().__init__()
+        self.original_stderr = original_stderr
+
+    def write(self, text):
+        self.original_stderr.write(text)
+        self.original_stderr.flush()
+        self.text_written.emit(text)
+
+    def flush(self):
+        self.original_stderr.flush()
+
+
 class TaskSortModel(QSortFilterProxyModel):
     def lessThan(self, left, right):
         if left.column() == 0:
@@ -445,6 +461,9 @@ class NextTask(QMainWindow):
         left_layout = QVBoxLayout(left_frame)
 
         self.txt_main = QTextEdit()
+        error_redirector = ErrorRedirector(sys.stderr)
+        error_redirector.text_written.connect(self.txt_main.insertPlainText)
+        sys.stderr = error_redirector
         left_layout.addWidget(self.txt_main)
         self.txt_main.setReadOnly(False)
         self.txt_main.setAcceptRichText(False)
@@ -1104,13 +1123,18 @@ class NextTask(QMainWindow):
                 
                 for index in selection:
                     row = index.row()
-                    items = self.tree_model.takeRow(row)
 
                     if sort_order == Qt.SortOrder.AscendingOrder:
+                        if row == 0:
+                            continue
+                        items = self.tree_model.takeRow(row)
                         items[0].setText(str(row))
                         items[0].setData(row, Qt.ItemDataRole.UserRole + 1)
                         self.tree_model.insertRow(row - 1, items)
                     else:
+                        if row == self.tree_model.rowCount() - 1:
+                            continue
+                        items = self.tree_model.takeRow(row)
                         items[0].setText(str(row + 2))
                         items[0].setData(row + 2, Qt.ItemDataRole.UserRole + 1)
                         self.tree_model.insertRow(row + 1, items)
@@ -1143,13 +1167,18 @@ class NextTask(QMainWindow):
 
                 for index in reversed(selection):
                     row = index.row()
-                    items = self.tree_model.takeRow(row)
 
                     if sort_order == Qt.SortOrder.AscendingOrder:
+                        if row == self.tree_model.rowCount() - 1:
+                            continue
+                        items = self.tree_model.takeRow(row)
                         items[0].setText(str(row + 2))
                         items[0].setData(row + 2, Qt.ItemDataRole.UserRole + 1)
                         self.tree_model.insertRow(row + 1, items)
                     else:
+                        if row == 0:
+                            continue
+                        items = self.tree_model.takeRow(row)
                         items[0].setText(str(row))
                         items[0].setData(row, Qt.ItemDataRole.UserRole + 1)
                         self.tree_model.insertRow(row - 1, items)
