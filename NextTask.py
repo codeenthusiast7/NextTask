@@ -1456,14 +1456,14 @@ class NextTask(QMainWindow):
             ).text()
             for column in range(self.tree_model.columnCount())
         ]
-        try:
-            self.qle_name.setText(values[1])
-            self.qle_name.setCursorPosition(0)
-            self.qle_wgt.setText(values[2])
-            self.qle_onoff.setText(values[3])
-            self.qle_routput.setText(values[4])
-        except IndexError:
-            return
+
+        qles = [self.qle_name, self.qle_wgt, self.qle_onoff, self.qle_routput]
+        for n, entry in enumerate(qles):
+            if self.focused and entry in self.focused and qles[n].text() != self.tree_model.item(self.active_task, n + 1).text():
+                continue
+            else:
+                qles[n].setText(values[n + 1])
+                qles[n].setCursorPosition(0)
 
     def motion(self, _):
         pos = self.tree.viewport().mapFromGlobal(QCursor.pos())
@@ -1475,15 +1475,6 @@ class NextTask(QMainWindow):
 
         task = index.row()
         if task == self.active_task:
-            return
-    
-        if self.first_task is None:
-            self.first_task = self.active_task = task
-            self.tree.selectionModel().select(
-                self.tree_model.index(task, 0),
-                QItemSelectionModel.SelectionFlag.Toggle
-                | QItemSelectionModel.SelectionFlag.Rows
-            )
             return
         
         a = self.first_task
