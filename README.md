@@ -25,4 +25,4 @@ You can hold part of the randomizer result to keep that specific result and rand
 You can edit a specific column by clicking the name, weight, on/off or randomizer label and selecting update selected to update only that part of the task.
 
 
-I learned how to make the treeview and a lot about tkinter from Codemy.com on youtube. (https://www.youtube.com/watch?v=G9seoA3Mv4Y)
+Credits to Codemy.com on youtube for teaching me about treeview, basic GUI stuff and for inspiring the layout. (https://www.youtube.com/watch?v=G9seoA3Mv4Y)
