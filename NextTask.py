@@ -147,7 +147,7 @@ pattern_current_task = r"(?P<full_task>(?P<name>[^,\n\s](?:[^,\n]*[^,\n\s])?)(?:
 expl = ["Name: Characters other than '.' and ','.",
         "Weights: Any integer.\n\tEqual weights = equal propability to be picked.",
         "On/Off: 0 or 1.\n\t0 to exclude and 1 to include in the randomizer.",
-        f"Randomizer pattern:\n\t{patterns[3]}"]
+        f"Randomizer pattern examples:\n\tWIP"]
 helptext = f"""
 Patterns:   {expl[0]}
             {expl[1]}
@@ -983,7 +983,7 @@ class NextTask(QMainWindow):
                 if not self.focused or entry in self.focused:
                     reg = re.match(patterns[n], entry.text())
                     if not reg:
-                        QMessageBox.critical(self, 'Error', 'Unable to read input. At:\n' + expl[n])
+                        QMessageBox.warning(self, 'Warning', 'Unable to read input. At:\n' + expl[n])
                         entry.setFocus()
                         return
                     changes.append(columns[n])
@@ -1013,11 +1013,10 @@ class NextTask(QMainWindow):
             conn.close()
 
         def add_task():
-            name = self.qle_name.text()
-            for n, entry in enumerate(edit_frame_1.findChildren(QLineEdit)):
+            for n, entry in enumerate([self.qle_name, self.qle_wgt, self.qle_onoff]):
                 reg = re.match(patterns[n], entry.text())
                 if not reg:
-                    QMessageBox.critical(self, 'Error', 'Unable to read input. Should be:\n' + expl[n])
+                    QMessageBox.warning(self, 'Error', 'Unable to read input.\n' + expl[n])
                     entry.setFocus()
                     return
                 if n == 0:
@@ -1036,8 +1035,7 @@ class NextTask(QMainWindow):
                             m += 1
                             name = str(1 + m).join(name.rsplit(str(m), 1))
                         continue
-            if not self.randomizer_check(self.qle_routput.text(), 2):
-                return
+            rizer = self.randomizer_check(self.qle_routput.text(), 1)
             conn = sqlite3.connect(app_dir / 'tasks.db')
             c = conn.cursor()
             c.execute('''INSERT INTO tasks VALUES
@@ -1053,7 +1051,7 @@ class NextTask(QMainWindow):
                         'name': name,
                         'weight': self.qle_wgt.text(),
                         'onoff': self.qle_onoff.text(),
-                        'randomizer': self.qle_routput.text(),
+                        'randomizer': rizer,
                     }
             )
             row_items = [
@@ -1061,10 +1059,12 @@ class NextTask(QMainWindow):
                 QStandardItem(name),
                 QStandardItem(self.qle_wgt.text()),
                 QStandardItem(self.qle_onoff.text()),
-                QStandardItem(self.qle_routput.text()),
+                QStandardItem(rizer),
             ]
             row_items[0].setData(c.lastrowid, Qt.ItemDataRole.UserRole)
             row_items[0].setData(self.tree_model.rowCount() + 1, Qt.ItemDataRole.UserRole + 1)
+            row_items[2].setTextAlignment(Qt.AlignCenter)
+            row_items[3].setTextAlignment(Qt.AlignCenter)
             self.tree_model.appendRow(row_items)
             conn.commit()
             conn.close()
@@ -1463,7 +1463,8 @@ class NextTask(QMainWindow):
                 continue
             else:
                 qles[n].setText(values[n + 1])
-                qles[n].setCursorPosition(0)
+                if n in (0, 3):
+                    qles[n].setCursorPosition(0)
 
     def motion(self, _):
         pos = self.tree.viewport().mapFromGlobal(QCursor.pos())
@@ -1534,39 +1535,40 @@ class NextTask(QMainWindow):
         else:
             self.escape()
 
-    def randomizer_check(self, target, *mode):
-        if target:
-            reg = list(re.finditer(patterns[3], target))
-            if reg:
-                rizer = []
-                for repet in reg:
-                    if repet.group("num_lo"):
-                        if int(repet.group("num_lo")) > int(repet.group("num_hi")):
-                            self.txt_main.append(f"Skipped: {repet.group('match')}. Try: {repet.group('name')} ([{repet.group('num_hi')}-{repet.group('num_lo')}])")
-                            continue
-                        rizer.append(f"{repet.group("name")} [{repet.group("num_lo")}-{repet.group("num_hi")}]")
-                    elif repet.group("str_lo"):
-                        if addup(repet.group("str_lo")) > addup(repet.group("str_hi")):
-                            self.txt_main.append(f"Skipped: {repet.group('match')}. Try: {repet.group('name')} ([{repet.group('str_hi')}-{repet.group('str_lo')}])")
-                            continue
-                        rizer.append(f"{repet.group("name")} [{repet.group("str_lo")}-{repet.group("str_hi")}]")
-                    else:
-                        reg2 = list(re.finditer(pattern_sample, repet.group("choices")))
-                        rizer.append(
-                            f"{repet.group("name")} [{', '.join([f'{repet2.group("name")}/{repet2.group("weight")}' if repet2.group("weight") else repet2.group("name") for repet2 in reg2])}]")
-                rizer = ', '.join(rizer)
-                if mode == (1,) or mode == (2,):
-                    self.qle_routput.setText(rizer)
-                return rizer
+    def randomizer_check(self, target, mode):
+        if not target:
+            return default_rizer
+        
+        reg = list(re.finditer(patterns[3], target))
+        if not reg:
+            if mode in (1, 2):
+                self.qle_routput.setFocus()
+                QMessageBox.warning(self, 'Error', f"Unable to read randomizer input.\n{expl[3]}"
+                    + ("\nUsing default instead" if mode == 1 else "")
+                )
+                return
+            return default_rizer if mode in (1, 3) else None
+
+        rizer = []
+        for repet in reg:
+            if repet.group("num_lo"):
+                if int(repet.group("num_lo")) > int(repet.group("num_hi")):
+                    self.txt_main.append(f"Skipped: {repet.group('match')}. Try: {repet.group('name')} ([{repet.group('num_hi')}-{repet.group('num_lo')}])")
+                    continue
+                rizer.append(f"{repet.group("name")} [{repet.group("num_lo")}-{repet.group("num_hi")}]")
+            elif repet.group("str_lo"):
+                if addup(repet.group("str_lo")) > addup(repet.group("str_hi")):
+                    self.txt_main.append(f"Skipped: {repet.group('match')}. Try: {repet.group('name')} ([{repet.group('str_hi')}-{repet.group('str_lo')}])")
+                    continue
+                rizer.append(f"{repet.group("name")} [{repet.group("str_lo")}-{repet.group("str_hi")}]")
             else:
-                if mode == (1,) or mode == (2,):
-                    self.qle_routput.setFocus()
-                if mode == (1,):
-                    QMessageBox.critical(self, 'Error', f"Unable to read input. At:\n{expl[3]}\nUsing default instead")
-                if mode == (2,):
-                    QMessageBox.critical(self, 'Error', f"Unable to read input. At:\n{expl[3]}")
-                    return
-        return default_rizer
+                reg2 = list(re.finditer(pattern_sample, repet.group("choices")))
+                rizer.append(
+                    f"{repet.group("name")} [{', '.join([f'{repet2.group("name")}/{repet2.group("weight")}' if repet2.group("weight") else repet2.group("name") for repet2 in reg2])}]")
+        rizer = ', '.join(rizer)
+        if mode == (1,) or mode == (2,):
+            self.qle_routput.setText(rizer)
+        return rizer
 
     def export_tasks(self, tree):
         fname, _ = QFileDialog.getSaveFileName(w, 'Save File', str(app_dir), filter='Text Files (*.txt)')
@@ -1688,10 +1690,7 @@ class NextTask(QMainWindow):
                                 else:
                                     weight = '1'
                                     onoff = '1'
-                                if reg.group('rizer'):
-                                    rizer = self.randomizer_check(reg.group('rizer'), 3)
-                                else:
-                                    rizer = default_rizer
+                                rizer = self.randomizer_check(reg.group('rizer'), 3)
                                 c.execute('INSERT INTO tasks VALUES (:row_pos, :name, :weight, :onoff, :randomizer)',
                                           {
                                               'row_pos': row_pos,
