@@ -4,7 +4,7 @@ from PySide6.QtWidgets import (
     QPushButton, QLabel, QLineEdit, QTextEdit, QTreeView, QFileDialog,
     QMessageBox, QSplitter, QFrame, QSizePolicy, QAbstractItemView
 )
-from PySide6.QtGui import QFont, QColor, QTextCursor, QTextCharFormat, QStandardItemModel, QStandardItem, QCursor, QIcon
+from PySide6.QtGui import QFont, QColor, QTextCursor, QTextCharFormat, QStandardItemModel, QStandardItem, QIcon, QBrush
 from PySide6.QtCore import Qt, QItemSelectionModel, QSortFilterProxyModel, QObject, Signal
 import sys
 import sqlite3
@@ -15,6 +15,8 @@ import numpy as np
 from datetime import datetime
 import shutil
 import subprocess
+from fractions import Fraction
+from math import lcm
 
 if getattr(sys, 'frozen', False):
     # Path(sys.executable).resolve().parent points to App/
@@ -35,15 +37,16 @@ fmt.setForeground(QColor("blue"))
 default_fmt = QTextCharFormat()
 default_fmt.setForeground(QColor("black"))
 
-patterns = [r"^\s*(?P<target>[^,\n\s](?:[^,\n]*[^,\n\s])?)$",
+# \s includes \n
+patterns = [r"^\s*(?P<target>[^,\s](?:[^,\n]*[^,\s])?)\s*$",
             r"^\s*(?P<target>\d+)\s*$",
             r"^\s*(?P<target>0|1)\s*$",
             re.compile(
             r"""
             (?P<match>
                 (?P<name>
-                    [^,\n\[\s]
-                    (?:[^,\n\[]*[^,\n\[\s])?
+                    [^,\[\s]
+                    (?:[^,\n\[]*[^,\[\s])?
                 )
                 (?:
                     \s*\[\s*
@@ -60,12 +63,12 @@ patterns = [r"^\s*(?P<target>[^,\n\s](?:[^,\n]*[^,\n\s])?)$",
                     |
                     \s*\[\s*
                     (?P<choices>
-                        [^,\n\]\s]
-                        (?:[^,\n\]]*[^,\n\]\s])?
+                        [^,\]\s]
+                        (?:[^,\n\]]*[^,\]\s])?
                         (?:
                             \s*,\s*
-                            [^,\n\]\s]
-                            (?:[^,\n\]]*[^,\n\]\s])?
+                            [^,\]\s]
+                            (?:[^,\n\]]*[^,\]\s])?
                         )*
                     )
                     \s*\]
@@ -83,8 +86,8 @@ pattern_import_tasks = re.compile(
                             \s*,\s*
                         )?
                         (?P<name>
-                            [^,\n\s]
-                            (?:[^,\n]*[^,\n\s])?
+                            [^,\s]
+                            (?:[^,\n]*[^,\s])?
                         )
                         (?P<options>
                             \s*,\s*
@@ -106,23 +109,23 @@ pattern_import_ctasks = re.compile(
                             \s*,\s*
                         )?
                         (?P<name>
-                            [^,\n\s]
-                            (?:[^,\n]*[^,\n\s])?
+                            [^,\s]
+                            (?:[^,\n]*[^,\s])?
                         )
                         (?:
                             \s*,\s*
-                            (?P<task>[^,\n\s]
-                                (?:[^,\n]*[^,\n\s])?
+                            (?P<task>[^,\s]
+                                (?:[^,\n]*[^,\s])?
                             )
                         )?
                         (?:
                             \s*,\s*\[\s*
                             (?P<keywords>
-                                [^\n\]\s]
-                                (?:[^\n\]]*[^\n\]\s])?
+                                [^\]\s]
+                                (?:[^\n\]]*[^\]\s])?
                                 (?:
-                                    \s*,\s*[^\n\]\s]
-                                    (?:[^\n\]]*[^\n\]\s])?
+                                    \s*,\s*[^\]\s]
+                                    (?:[^\n\]]*[^\]\s])?
                                 )*
                             )?
                             \s*\]
@@ -141,8 +144,8 @@ pattern_import_ctasks = re.compile(
                         re.VERBOSE,
                         )
 pattern_duplic_name = r"^.+\((?P<num_dupe>\d+)\)$"
-pattern_sample = r"\s*(?P<name>[^,\n\/\s](?:[^,\n\/]*[^,\n\/\s])?)\s*(?:\/\s*(?P<weight>\d+))*"
-pattern_current_task = r"(?P<full_task>(?P<name>[^,\n\s](?:[^,\n]*[^,\n\s])?)(?:\s*,\s*(?P<task>[^\n]+)*)?)"
+pattern_sample = r"\s*(?P<name>[^,\/\s](?:[^,\n\/]*[^,\/\s])?)\s*(?:\/\s*(?P<weight>\d+))*"
+pattern_current_task = r"(?P<full_task>(?P<name>[^,\s](?:[^,\n]*[^,\s])?)(?:\s*,\s*(?P<task>[^\n]+)*)?)"
 
 expl = ["Name: Characters other than '.' and ','.",
         "Weights: Any integer.\n\tEqual weights = equal propability to be picked.",
@@ -159,7 +162,7 @@ the exported .txt file with a notepad\n4) Make your edits\n5) Import the new txt
 same as before, for them to appear.
 """
 
-button_style_tabs = """
+bt_style_tabs = """
     QPushButton {
         background-color: #9C6F6F;
         color: %s;
@@ -271,35 +274,22 @@ class TaskSortModel(QSortFilterProxyModel):
 
 
 class TreeView(QTreeView):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.motion_enabled = False
-
-    def mouseMoveEvent(self, event):
-        if self.motion_enabled:
-            w.motion(event)
-
-        super().mouseMoveEvent(event)
-
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
-            w.click_press(event)
+            w.click_press(self.indexAt(event.position().toPoint()))
 
         super().mousePressEvent(event)
 
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
-            w.click_release(event)
+            w.click_release()
 
         super().mouseReleaseEvent(event)
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key.Key_Escape:
             w.escape()
-        elif (
-            event.key() == Qt.Key.Key_A
-            and event.modifiers() & Qt.KeyboardModifier.ControlModifier
-        ):
+        elif event.modifiers() & Qt.KeyboardModifier.ControlModifier and event.key() == Qt.Key.Key_A:
             w.select_all()
 
         if event.key() == Qt.Key.Key_Up or event.key() == Qt.Key.Key_Down:
@@ -337,6 +327,9 @@ class NextTask(QMainWindow):
         self.held = []
         self.movedRows = False
         self.doubleClicked = False
+        self.ewm_rows = []
+        self.ewm_chances = []
+        self.ewm_all_rows = []
 
         self.notes_url = app_dir / 'Notes'
         self.notes_url.mkdir(exist_ok=True)
@@ -373,7 +366,7 @@ class NextTask(QMainWindow):
 
         edit_menu = menubar.addMenu('Edit')
         find_weights_action = edit_menu.addAction('Find weights based on chance')
-        find_weights_action.triggered.connect(self.find_weights)
+        find_weights_action.triggered.connect(self.show_hide_ewm)
 
         help_menu = menubar.addAction('Help')
         help_menu.triggered.connect(lambda: QMessageBox.information(self, 'Help', helptext))
@@ -396,32 +389,32 @@ class NextTask(QMainWindow):
 
         def bt_call1():
             if f"color: {default_fg}" not in bt_tasks.styleSheet() and f"color: {default_fg}" not in bt_completed_tasks.styleSheet():
-                bt_tasks.setStyleSheet(button_style_tabs % default_fg)
+                bt_tasks.setStyleSheet(bt_style_tabs % default_fg)
                 right_frame.show()
                 self.tree.show()
             elif f"color: {default_fg}" in bt_tasks.styleSheet():
-                bt_tasks.setStyleSheet(button_style_tabs % inactive_fg)
+                bt_tasks.setStyleSheet(bt_style_tabs % inactive_fg)
                 right_frame.hide()
                 self.tree.hide()
             else:
-                bt_completed_tasks.setStyleSheet(button_style_tabs % inactive_fg)
+                bt_completed_tasks.setStyleSheet(bt_style_tabs % inactive_fg)
                 self.tree_completed.hide()
-                bt_tasks.setStyleSheet(button_style_tabs % default_fg)
+                bt_tasks.setStyleSheet(bt_style_tabs % default_fg)
                 self.tree.show()
 
         def bt_call2():
             if f"color: {default_fg}" not in bt_tasks.styleSheet() and f"color: {default_fg}" not in bt_completed_tasks.styleSheet():
-                bt_completed_tasks.setStyleSheet(button_style_tabs % default_fg)
+                bt_completed_tasks.setStyleSheet(bt_style_tabs % default_fg)
                 right_frame.show()
                 self.tree_completed.show()
             elif f"color: {default_fg}" in bt_completed_tasks.styleSheet():
-                bt_completed_tasks.setStyleSheet(button_style_tabs % inactive_fg)
+                bt_completed_tasks.setStyleSheet(bt_style_tabs % inactive_fg)
                 right_frame.hide()
                 self.tree_completed.hide()
             else:
-                bt_tasks.setStyleSheet(button_style_tabs % inactive_fg)
+                bt_tasks.setStyleSheet(bt_style_tabs % inactive_fg)
                 self.tree.hide()
-                bt_completed_tasks.setStyleSheet(button_style_tabs % default_fg)
+                bt_completed_tasks.setStyleSheet(bt_style_tabs % default_fg)
                 self.tree_completed.show()
 
         def toggle_edit_frames():
@@ -445,10 +438,10 @@ class NextTask(QMainWindow):
 
 
         bt_tasks = QPushButton("Tasks Table")
-        bt_tasks.setStyleSheet(button_style_tabs % default_fg)
+        bt_tasks.setStyleSheet(bt_style_tabs % default_fg)
 
         bt_completed_tasks = QPushButton("Completed Tasks")
-        bt_completed_tasks.setStyleSheet(button_style_tabs % inactive_fg)
+        bt_completed_tasks.setStyleSheet(bt_style_tabs % inactive_fg)
 
         top_bar.addWidget(bt_tasks)
         top_bar.addWidget(bt_completed_tasks)
@@ -460,6 +453,40 @@ class NextTask(QMainWindow):
         left_frame = QFrame(splitter)
         left_layout = QVBoxLayout(left_frame)
 
+        # Edit_weights_menu
+        self.frame_ewm = QFrame()
+        self.frame_ewm.setWindowTitle("Edit weights menu")
+        left_layout.addWidget(self.frame_ewm)
+
+        layout_ewm = QGridLayout(self.frame_ewm)
+        self.txt_ewm = QTextEdit()
+        layout_ewm.addWidget(self.txt_ewm, 0, 0, 1, 2)
+        self.txt_ewm.setReadOnly(True)
+        self.txt_ewm.setLineWrapMode(QTextEdit.NoWrap)
+        self.txt_ewm.setFont(QFont('TkFixedFont', 9))
+
+        lbl_selection = QLabel("Select rows")
+        lbl_chance = QLabel("Chance to pick (decimal)")
+        layout_ewm.addWidget(lbl_selection, 1, 0) 
+        layout_ewm.addWidget(lbl_chance, 1, 1) 
+
+        self.qle_selection = QLineEdit()
+        self.qle_chance = QLineEdit()
+        layout_ewm.addWidget(self.qle_selection, 2, 0) 
+        layout_ewm.addWidget(self.qle_chance, 2, 1)
+
+        bt_ewm_add =  QPushButton("Add next selection")
+        bt_ewm_clear =  QPushButton("Clear selections")
+        layout_ewm.addWidget(bt_ewm_add, 3, 0)
+        layout_ewm.addWidget(bt_ewm_clear, 3, 1)
+
+        bt_ewm_calculate = QPushButton("Calculate")
+        bt_ewm_close = QPushButton("Close")
+        layout_ewm.addWidget(bt_ewm_calculate, 4, 0)
+        layout_ewm.addWidget(bt_ewm_close, 4, 1)
+        self.frame_ewm.hide()
+
+        # self.txt_main
         self.txt_main = QTextEdit()
         error_redirector = ErrorRedirector(sys.stderr)
         error_redirector.text_written.connect(self.txt_main.insertPlainText)
@@ -770,14 +797,14 @@ class NextTask(QMainWindow):
                 layout_up.addWidget(qle_keywords, 0, 1)
 
                 lbl_files = QLabel("Store files ")
-                button_files = QPushButton("Upload")
+                bt_files = QPushButton("Upload")
                 layout_up.addWidget(lbl_files, 1, 0)
-                layout_up.addWidget(button_files, 1, 1)
+                layout_up.addWidget(bt_files, 1, 1)
 
-                button_cancel = QPushButton("Cancel")
-                button_ok = QPushButton("OK")
-                layout_down.addWidget(button_cancel)
-                layout_down.addWidget(button_ok)
+                bt_cancel = QPushButton("Cancel")
+                bt_ok = QPushButton("OK")
+                layout_down.addWidget(bt_cancel)
+                layout_down.addWidget(bt_ok)
 
                 fnames = []
 
@@ -789,13 +816,13 @@ class NextTask(QMainWindow):
                     if selected:
                         fnames = selected
                         if len(selected) > 1:
-                            button_files.setText('Files selected')
+                            bt_files.setText('Files selected')
                         else:
-                            button_files.setText('File selected')
+                            bt_files.setText('File selected')
 
-                button_files.clicked.connect(store_files)
-                button_cancel.clicked.connect(dialog.reject)
-                button_ok.clicked.connect(dialog.accept)
+                bt_files.clicked.connect(store_files)
+                bt_cancel.clicked.connect(dialog.reject)
+                bt_ok.clicked.connect(dialog.accept)
 
                 dialog.adjustSize()
 
@@ -1076,14 +1103,12 @@ class NextTask(QMainWindow):
                 db = 'tasks.db'
                 model = self.tree_model
                 selection_model = self.tree.selectionModel()
-
                 proxy_indexes = selection_model.selectedRows()
                 selection = [self.proxy.mapToSource(pindex) for pindex in proxy_indexes]
             elif self.tree_completed.isVisible():
                 db = 'completed.db'
                 model = self.tree_model_completed
                 selection_model = self.tree_completed.selectionModel()
-
                 selection = selection_model.selectedRows()
             else:
                 return
@@ -1235,14 +1260,14 @@ class NextTask(QMainWindow):
                 layout_down = QHBoxLayout(frame_down)
 
                 lbl_files = QLabel("Upload files ")
-                button_files = QPushButton("Upload")
+                bt_files = QPushButton("Upload")
                 layout_up.addWidget(lbl_files, 0, 0)
-                layout_up.addWidget(button_files, 0, 1)
+                layout_up.addWidget(bt_files, 0, 1)
 
-                button_cancel = QPushButton("Cancel")
-                button_ok = QPushButton("OK")
-                layout_down.addWidget(button_cancel)
-                layout_down.addWidget(button_ok)
+                bt_cancel = QPushButton("Cancel")
+                bt_ok = QPushButton("OK")
+                layout_down.addWidget(bt_cancel)
+                layout_down.addWidget(bt_ok)
 
                 fnames = []
 
@@ -1254,13 +1279,13 @@ class NextTask(QMainWindow):
                     if selected:
                         fnames = selected
                         if len(selected) > 1:
-                            button_files.setText('Files selected')
+                            bt_files.setText('Files selected')
                         else:
-                            button_files.setText('File selected')
+                            bt_files.setText('File selected')
 
-                button_files.clicked.connect(store_files)
-                button_cancel.clicked.connect(dialog.reject)
-                button_ok.clicked.connect(dialog.accept)
+                bt_files.clicked.connect(store_files)
+                bt_cancel.clicked.connect(dialog.reject)
+                bt_ok.clicked.connect(dialog.accept)
 
                 dialog.adjustSize()
 
@@ -1280,6 +1305,10 @@ class NextTask(QMainWindow):
 
 
         # Connections
+        bt_ewm_clear.clicked.connect(self.ewm_clear)
+        bt_ewm_add.clicked.connect(self.ewm_add_another)
+        bt_ewm_calculate.clicked.connect(self.ewm_find_weights)
+        bt_ewm_close.clicked.connect(self.show_hide_ewm)
         bt_rl.clicked.connect(rl)
         bt_rd.clicked.connect(rd)
         bt_rt.clicked.connect(rt)
@@ -1390,41 +1419,150 @@ class NextTask(QMainWindow):
         self.lbl_score_all.setText(f'Completed: {self.total_score}')
 
 
-    def find_weights(self):
-        dialog = QDialog(self)
-        dialog.setWindowTitle("Enter chance")
+    def show_hide_ewm(self):
+        if self.txt_main.isVisible():
+            self.txt_main.hide()
+            self.frame_ewm.show()
+            self.qle_selection.setText(", ".join([str(self.proxy.mapToSource(pindex).row() + 1) for pindex in self.tree.selectionModel().selectedRows()]))
+        else:
+            self.frame_ewm.hide()
+            self.txt_main.show()
+            for column in range(self.tree_model.columnCount()):
+                for row in self.ewm_all_rows:
+                    self.tree_model.item(row, column).setBackground(QBrush())
+            self.ewm_clear()
+            self.txt_ewm.clear()
 
-        layout = QVBoxLayout(dialog)
+    def ewm_clear(self):
+        self.ewm_rows.clear()
+        self.ewm_chances.clear()
+        self.ewm_all_rows.clear()
 
-        entry = QLineEdit()
-        layout.addWidget(entry)
+    def ewm_calc(self, sum_chance):
+        results = []
+        if sum_chance == 1:
+            fracs = []
+            for i in range(len(self.ewm_rows)):
+                n = len(self.ewm_rows[i])
+                chance = self.ewm_chances[i]
+                fracs.append(Fraction(str(chance)) / n)  # convert fraction to have integer numerators, useful for lowest common multiplier
+            results = [x * lcm(*[frac.denominator for frac in fracs]) for x in fracs]
+        else:
+            for i in range(len(self.ewm_rows)):
+                chance = self.ewm_chances[i]
+                n = len(self.ewm_rows[i])
+                rw = 0
+                for row in range(self.tree_model.rowCount()):
+                    if row not in self.ewm_all_rows and self.tree_model.item(row, 3).text() == '1':
+                        rw += int(self.tree_model.item(row, 2).text())
 
-        button = QPushButton("OK")
-        layout.addWidget(button)
+                results.append(f"{rw/n*chance/(1-sum_chance):.2f}")
 
-        button.clicked.connect(dialog.accept)
+        return results
 
-        if dialog.exec() and entry.text():
-            proxy_indexes = self.tree.selectionModel().selectedRows()
-            source_indexes = [self.proxy.mapToSource(pindex) for pindex in proxy_indexes]
-            selection_ids = [int(self.tree_model.itemFromIndex(sindex).text()) - 1 for sindex in source_indexes]
-            if not selection_ids:
-                QMessageBox.critical(self, 'Error', 'No rows were selected')
+    def ewm_add_another(self):
+        for qle in (self.qle_selection, self.qle_chance):
+            if not qle.text():
+                qle.setFocus()
+                QMessageBox.critical(self, 'Error', 'Empty entry')
                 return
 
-            chance = float(entry.text())
-            if not 0.0 < chance < 1.0:
-                QMessageBox.critical(self, 'Error', 'Entry chance must be between 0 and 1')
+        try:
+            selection = [int(row.strip()) - 1 for row in self.qle_selection.text().split(',')]
+        except ValueError:
+            QMessageBox.critical(self, 'Error', f'Selection entry must have only comma separated numbers')
+            return
+
+        for row in selection:
+            if row in self.ewm_all_rows:
+                self.qle_selection.setFocus()
+                QMessageBox.critical(self, 'Error', f'Row No. {row + 1} is already selected')
+                return
+            if self.tree_model.item(row, 3).text() == '0':
+                QMessageBox.critical(self, 'Error', f'Row No. {row + 1} is not enabled. You should change "On/Off" to 1 first')
                 return
 
-            n = len(selection_ids)
-            rw = 0
-            for row in range(self.tree_model.rowCount()):
-                if row not in selection_ids:
-                    rw += int(self.tree_model.item(row, 2).text())
+        try:
+            chance = float(self.qle_chance.text())
+        except ValueError:
+            QMessageBox.critical(self, 'Error', f'Chance entry must be a number')
+            return
 
-            weight = rw/n*chance/(1-chance)
-            self.txt_main.append(f"You must edit the weights to be {weight}.")
+        if not (0 < chance < 1):
+            QMessageBox.critical(self, 'Error', f'Chance must be between 0 and 1')
+            return
+        
+        self.ewm_chances.append(chance)
+        sum_chance = sum(self.ewm_chances)
+
+        if sum_chance > 1:
+            QMessageBox.critical(self, 'Error', f'Sum of all chances must not be over 1')
+            del self.ewm_chances[-1]
+            return
+
+        self.ewm_all_rows.extend(selection)
+        self.ewm_rows.append(selection)
+        self.qle_selection.setText('')
+        self.qle_chance.setText('')
+
+        results = self.ewm_calc(sum_chance)
+
+        self.txt_ewm.clear()
+        for i in range(len(self.ewm_rows)):
+            self.txt_ewm.append(f"Selection {i + 1}")
+            self.txt_ewm.append(f"Rows: {[row + 1 for row in self.ewm_rows[i]]}")
+            self.txt_ewm.append(f"Chance: {self.ewm_chances[i]*100}%")
+            self.txt_ewm.append(f"Weights for selection {i + 1}: {results[i]}")
+
+        for column in range(self.tree_model.columnCount()):
+            for row in self.ewm_rows[-1]:
+                self.tree_model.item(row, column).setBackground(QColor("#444444"))
+
+    def ewm_find_weights(self):
+        if not self.ewm_all_rows:
+            for qle in (self.qle_selection, self.qle_chance):
+                if not qle.text():
+                    qle.setFocus()
+                    QMessageBox.critical(self, 'Error', 'Empty entry')
+                    return
+
+        if self.qle_selection.text() and self.qle_chance.text():
+            try:
+                selection = [int(row.strip()) - 1 for row in self.qle_selection.text().split(',')]
+            except ValueError:
+                QMessageBox.critical(self, 'Error', f'Selection entry must have only comma separated numbers')
+                return
+
+            try:
+                chance = float(self.qle_chance.text())
+            except ValueError:
+                QMessageBox.critical(self, 'Error', f'Chance entry must be a number')
+                return
+
+            if not (0 < chance < 1):
+                QMessageBox.critical(self, 'Error', f'Chance must be between 0 and 1')
+                return
+
+            self.ewm_chances.append(chance)
+            self.ewm_all_rows.extend(selection)
+            self.ewm_rows.append(selection)
+
+        sum_chance = sum(self.ewm_chances)
+
+        if sum_chance > 1:
+            QMessageBox.critical(self, 'Error', f'Sum of all chances must not be over 1')
+            del self.ewm_chances[-1]
+            return
+
+        results = self.ewm_calc(sum_chance)
+
+        self.txt_main.clear()
+        for i in range(len(self.ewm_rows)):
+            self.txt_main.append(f"Selection {i + 1}")
+            self.txt_main.append(f"Rows: {[row + 1 for row in self.ewm_rows[i]]}")
+            self.txt_main.append(f"Chance: {self.ewm_chances[i]*100}%")
+            self.txt_main.append(f"Weights for selection {i + 1}: {results[i]}")
+        self.show_hide_ewm()
 
     def select_all(self):
         if self.tree.isVisible():
@@ -1468,46 +1606,6 @@ class NextTask(QMainWindow):
                 if n in (0, 3):
                     qles[n].setCursorPosition(0)
 
-    def motion(self, _):
-        pos = self.tree.viewport().mapFromGlobal(QCursor.pos())
-        pindex = self.tree.indexAt(pos)
-        index = self.proxy.mapToSource(pindex)
-
-        if not index.isValid():
-            return
-
-        task = index.row()
-        if task == self.active_task:
-            return
-        
-        a = self.first_task
-        ac = self.active_task
-        c = task
-
-        if c > ac:
-            if c > a > ac:  # down from in to away
-                toggled = list(range(ac, a)) + list(range(a + 1, c + 1))
-            elif c > a:  # down and away
-                toggled = list(range(ac + 1, c + 1))
-            else:  # down and in
-                toggled = list(range(ac, c))
-        else:
-            if ac > a > c:  # up from in to away
-                toggled = list(range(a + 1, ac + 1)) + list(range(c, a))
-            elif a > c:  # up and away
-                toggled = list(range(c, ac))
-            else:  # up and in
-                toggled = list(range(c + 1, ac + 1))
-
-        for row in toggled:
-            index = self.tree_model.index(row, 0)
-            self.tree.selectionModel().select(
-                index,
-                QItemSelectionModel.SelectionFlag.Toggle
-                | QItemSelectionModel.SelectionFlag.Rows
-            )
-        self.active_task = task
-
     def escape(self):
         proxy_indexes = self.tree.selectionModel().selectedRows()
         selection = [self.proxy.mapToSource(pindex) for pindex in proxy_indexes]
@@ -1518,22 +1616,20 @@ class NextTask(QMainWindow):
                 QItemSelectionModel.SelectionFlag.Rows
             )
 
-    def click_press(self, _):
-        pos = self.tree.viewport().mapFromGlobal(QCursor.pos())
-        pindex = self.tree.indexAt(pos)
+    def click_press(self, pindex):
         index = self.proxy.mapToSource(pindex)
 
         self.first_task = self.active_task = index.row()
-        self.tree.motion_enabled = True
 
-    def click_release(self, _):
-        self.tree.motion_enabled = False
+    def click_release(self):
         self.first_task = None
         if self.doubleClicked:
             self.doubleClicked = False
             return
         if self.active_task is not None:
             self.select_task()
+            if self.frame_ewm.isVisible():
+                self.qle_selection.setText(", ".join([str(self.proxy.mapToSource(pindex).row() + 1) for pindex in self.tree.selectionModel().selectedRows()]))
         else:
             self.escape()
 
@@ -1619,19 +1715,19 @@ class NextTask(QMainWindow):
             layout_down = QHBoxLayout(frame_down)
 
             lbl_file = QLabel("Select file ")
-            button_file = QPushButton("Select")
+            bt_file = QPushButton("Select")
             layout_up.addWidget(lbl_file, 0, 0)
-            layout_up.addWidget(button_file, 0, 1)
+            layout_up.addWidget(bt_file, 0, 1)
 
             lbl_notes = QLabel("Select 'Notes' folder (optional) ")
-            button_notes = QPushButton("Select")
+            bt_notes = QPushButton("Select")
             layout_up.addWidget(lbl_notes, 1, 0)
-            layout_up.addWidget(button_notes, 1, 1)
+            layout_up.addWidget(bt_notes, 1, 1)
 
-            button_cancel = QPushButton("Cancel")
-            button_ok = QPushButton("OK")
-            layout_down.addWidget(button_cancel)
-            layout_down.addWidget(button_ok)
+            bt_cancel = QPushButton("Cancel")
+            bt_ok = QPushButton("OK")
+            layout_down.addWidget(bt_cancel)
+            layout_down.addWidget(bt_ok)
 
             fname = ""
             notes_import = None
@@ -1643,7 +1739,7 @@ class NextTask(QMainWindow):
 
                 if selected:
                     fname = selected
-                    button_file.setText('File selected')
+                    bt_file.setText('File selected')
 
             def select_notes():
                 nonlocal notes_import
@@ -1652,13 +1748,13 @@ class NextTask(QMainWindow):
 
                 if folder:
                     notes_import = Path(folder)
-                    button_notes.setText('Folder selected')
+                    bt_notes.setText('Folder selected')
 
-            button_file.clicked.connect(select_file)
-            button_notes.clicked.connect(select_notes)
+            bt_file.clicked.connect(select_file)
+            bt_notes.clicked.connect(select_notes)
 
-            button_cancel.clicked.connect(dialog.reject)
-            button_ok.clicked.connect(dialog.accept)
+            bt_cancel.clicked.connect(dialog.reject)
+            bt_ok.clicked.connect(dialog.accept)
 
             dialog.adjustSize()
 
