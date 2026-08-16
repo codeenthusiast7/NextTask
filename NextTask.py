@@ -993,11 +993,11 @@ class NextTask(QMainWindow):
         def update_task():
             proxy_indexes = self.tree.selectionModel().selectedRows()
             source_indexes = [self.proxy.mapToSource(pindex) for pindex in proxy_indexes]
-            selection_ids = [int(self.tree_model.itemFromIndex(sindex).text()) - 1 for sindex in source_indexes]
-            if not selection_ids:
+            selection_rowids = [self.tree_model.itemFromIndex(sindex).data(Qt.ItemDataRole.UserRole) for sindex in source_indexes]
+            if not selection_rowids:
                 self.txt_main.append('There is no task selected. Select a task in the task table.')
                 return
-            if len(selection_ids) > 1 and (not self.focused or self.qle_name in self.focused):
+            if len(selection_rowids) > 1 and (not self.focused or self.qle_name in self.focused):
                 if QMessageBox.warning(self, 'Warning', 'Do you really want to give multiple tasks the same name?',
                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) != QMessageBox.Yes:
                     return
@@ -1021,17 +1021,17 @@ class NextTask(QMainWindow):
             conn = sqlite3.connect(app_dir / 'tasks.db')
             c = conn.cursor()
             command = f"UPDATE tasks SET {','.join([f"{change} = :{change}" for change in changes])} WHERE rowid = :rowid"
-            for row in selection_ids:
+            for rowid in selection_rowids:
                 c.execute(command, 
                           {
                               'name': self.qle_name.text(),
                               'weight': self.qle_wgt.text(),
                               'onoff': self.qle_onoff.text(),
                               'randomizer': self.qle_routput.text(),
-                              'rowid': row + 1
+                              'rowid': rowid
                           })
-            command = f"SELECT * FROM tasks WHERE rowid in ({', '.join('?' for _ in selection_ids)})"
-            c.execute(command, [rowid + 1 for rowid in selection_ids])
+            command = f"SELECT * FROM tasks WHERE rowid in ({', '.join('?' for _ in selection_rowids)})"
+            c.execute(command, selection_rowids)
             for task in c.fetchall():
                 for column, value in enumerate(task[1:]):
                     if columns[column] in changes:
@@ -1427,16 +1427,16 @@ class NextTask(QMainWindow):
         else:
             self.frame_ewm.hide()
             self.txt_main.show()
-            for column in range(self.tree_model.columnCount()):
-                for row in self.ewm_all_rows:
-                    self.tree_model.item(row, column).setBackground(QBrush())
             self.ewm_clear()
-            self.txt_ewm.clear()
 
     def ewm_clear(self):
+        for column in range(self.tree_model.columnCount()):
+            for row in self.ewm_all_rows:
+                self.tree_model.item(row, column).setBackground(QBrush())
         self.ewm_rows.clear()
         self.ewm_chances.clear()
         self.ewm_all_rows.clear()
+        self.txt_ewm.clear()
 
     def ewm_calc(self, sum_chance):
         results = []
@@ -1456,7 +1456,18 @@ class NextTask(QMainWindow):
                     if row not in self.ewm_all_rows and self.tree_model.item(row, 3).text() == '1':
                         rw += int(self.tree_model.item(row, 2).text())
 
-                results.append(f"{rw/n*chance/(1-sum_chance):.2f}")
+                results.append(rw/n*chance/(1-sum_chance))
+
+        self.txt_ewm.clear()
+        for i in range(len(self.ewm_rows)):
+            self.txt_ewm.append(f"Selection {i + 1}")
+            self.txt_ewm.append(f"Rows: {[row + 1 for row in self.ewm_rows[i]]}")
+            self.txt_ewm.append(f"Chance: {self.ewm_chances[i]*100}%")
+            self.txt_ewm.append(f"Weights for selection {i + 1}: {results[i]:.2f}")
+
+        for column in range(self.tree_model.columnCount()):
+            for row in self.ewm_rows[-1]:
+                self.tree_model.item(row, column).setBackground(QColor("#444444"))
 
         return results
 
@@ -1505,18 +1516,7 @@ class NextTask(QMainWindow):
         self.qle_selection.setText('')
         self.qle_chance.setText('')
 
-        results = self.ewm_calc(sum_chance)
-
-        self.txt_ewm.clear()
-        for i in range(len(self.ewm_rows)):
-            self.txt_ewm.append(f"Selection {i + 1}")
-            self.txt_ewm.append(f"Rows: {[row + 1 for row in self.ewm_rows[i]]}")
-            self.txt_ewm.append(f"Chance: {self.ewm_chances[i]*100}%")
-            self.txt_ewm.append(f"Weights for selection {i + 1}: {results[i]}")
-
-        for column in range(self.tree_model.columnCount()):
-            for row in self.ewm_rows[-1]:
-                self.tree_model.item(row, column).setBackground(QColor("#444444"))
+        self.ewm_calc(sum_chance)
 
     def ewm_find_weights(self):
         if not self.ewm_all_rows:
@@ -1556,12 +1556,27 @@ class NextTask(QMainWindow):
 
         results = self.ewm_calc(sum_chance)
 
-        self.txt_main.clear()
+        if QMessageBox.question(self, 'Apply', 'Apply the weights?') != QMessageBox.Yes:
+            return
+
+        conn = sqlite3.connect(app_dir / 'tasks.db')
+        c = conn.cursor()
         for i in range(len(self.ewm_rows)):
-            self.txt_main.append(f"Selection {i + 1}")
-            self.txt_main.append(f"Rows: {[row + 1 for row in self.ewm_rows[i]]}")
-            self.txt_main.append(f"Chance: {self.ewm_chances[i]*100}%")
-            self.txt_main.append(f"Weights for selection {i + 1}: {results[i]}")
+            selection_rowids = [self.tree_model.item(row, 0).data(Qt.ItemDataRole.UserRole) for row in self.ewm_rows[i]]
+            command = "UPDATE tasks SET weight = :weight WHERE rowid = :rowid"
+            for rowid in selection_rowids:
+                c.execute(command, 
+                            {
+                                'weight': max(round(results[i]), 1),
+                                'rowid': rowid
+                            })
+            command = f"SELECT * FROM tasks WHERE rowid in ({', '.join('?' for _ in selection_rowids)})"
+            c.execute(command, selection_rowids)
+            for task in c.fetchall():
+                self.tree_model.item(task[0] - 1, 2).setText(str(task[2]))
+        conn.commit()
+        conn.close()
+
         self.show_hide_ewm()
 
     def select_all(self):
