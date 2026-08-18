@@ -5,7 +5,7 @@ from PySide6.QtWidgets import (
     QMessageBox, QSplitter, QFrame, QSizePolicy, QAbstractItemView
 )
 from PySide6.QtGui import QFont, QColor, QTextCursor, QTextCharFormat, QStandardItemModel, QStandardItem, QIcon, QBrush
-from PySide6.QtCore import Qt, QItemSelectionModel, QSortFilterProxyModel, QObject, Signal
+from PySide6.QtCore import Qt, QItemSelectionModel, QSortFilterProxyModel, QObject, Signal, QSettings
 import sys
 import sqlite3
 import random
@@ -172,6 +172,7 @@ bt_style_tabs = """
     }
 """
 
+settings = QSettings("NextTask", "NextTask")
 
 def cleanup():
     if w.movedRows:
@@ -299,6 +300,16 @@ class TreeView(QTreeView):
         super().keyPressEvent(event)
 
 
+class TreeViewCompleted(QTreeView):
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_Escape:
+            w.escape()
+        elif event.modifiers() & Qt.KeyboardModifier.ControlModifier and event.key() == Qt.Key.Key_A:
+            w.select_all()
+            
+        super().keyPressEvent(event)
+
+
 class ClickableLabel(QLabel):
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -319,7 +330,6 @@ class NextTask(QMainWindow):
         self.mem_output = [] # only the results of output, not the names
         self.mem_index = 0
         self.active_task = None
-        self.first_task = None
         self.last_completed_task = None
         self.score = 0
         self.total_score = 0
@@ -561,14 +571,14 @@ class NextTask(QMainWindow):
 
         self.tree_model_completed = QStandardItemModel(0, 4)
         self.tree_model_completed.setHorizontalHeaderLabels(["No.", "Name", "Task", "Keywords", "Files", "Date", "Completitions"])
-        self.tree_completed = TreeView()
+        self.tree_completed = TreeViewCompleted()
         self.tree_completed.setModel(self.tree_model_completed)
         self.tree_completed.setColumnWidth(0, 40)
         self.tree_completed.setColumnWidth(1, 200)
         right_layout.addWidget(self.tree_completed)
-        proxy_completed = TaskSortModel()
-        proxy_completed.setSourceModel(self.tree_model_completed)
-        self.tree_completed.setModel(proxy_completed)
+        self.proxy_completed = TaskSortModel()
+        self.proxy_completed.setSourceModel(self.tree_model_completed)
+        self.tree_completed.setModel(self.proxy_completed)
         self.tree_completed.setSortingEnabled(True)
         self.tree_completed.sortByColumn(0, Qt.SortOrder.AscendingOrder)
         self.tree_completed.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
@@ -650,6 +660,7 @@ class NextTask(QMainWindow):
                 if times_done != '1':
                     output += 's'
             self.txt_main.append(output)
+            settings.setValue("NextTask", output)
 
         def rl():
             if not self.memory:
@@ -1241,7 +1252,7 @@ class NextTask(QMainWindow):
             if not index.isValid() or index.column() != 4:
                 return
 
-            index = proxy_completed.mapToSource(index)
+            index = self.proxy_completed.mapToSource(index)
 
             path = self.tree_model_completed.item(index.row(), 4).data(Qt.ItemDataRole.UserRole)
             if Path(path).is_dir():
@@ -1333,6 +1344,7 @@ class NextTask(QMainWindow):
         self.qle_routput.returnPressed.connect(update_task)
         self.tree.doubleClicked.connect(double_click)
         self.tree_completed.doubleClicked.connect(open_folder)
+        qle_current_task.textChanged.connect(lambda text: settings.setValue("NextTask", text))
 
 
         def create_databases():
@@ -1417,6 +1429,7 @@ class NextTask(QMainWindow):
         query_database()
 
         self.lbl_score_all.setText(f'Completed: {self.total_score}')
+        qle_current_task.setText(settings.value("NextTask", ""))
 
 
     def show_hide_ewm(self):
@@ -1581,14 +1594,16 @@ class NextTask(QMainWindow):
 
     def select_all(self):
         if self.tree.isVisible():
-            selection_model = self.tree.selectionModel()
+            tree = self.tree
         elif self.tree_completed.isVisible():
-            selection_model = self.tree_completed.selectionModel()
+            tree = self.tree_completed
         else:
             return
 
-        for row in range(self.tree_model.rowCount()):
-            index = self.tree_model.index(row, 0)
+        selection_model = tree.selectionModel()
+
+        for row in range(tree.model().rowCount()):
+            index = tree.model().index(row, 0)
 
             if not selection_model.isSelected(index):
                 selection_model.select(
@@ -1622,10 +1637,19 @@ class NextTask(QMainWindow):
                     qles[n].setCursorPosition(0)
 
     def escape(self):
-        proxy_indexes = self.tree.selectionModel().selectedRows()
-        selection = [self.proxy.mapToSource(pindex) for pindex in proxy_indexes]
+        if self.tree.isVisible():
+            tree = self.tree
+            proxy = self.proxy
+        elif self.tree_completed.isVisible():
+            tree = self.tree_completed
+            proxy = self.proxy_completed
+        else:
+            return
+
+        proxy_indexes = tree.selectionModel().selectedRows()
+        selection = [proxy.mapToSource(pindex) for pindex in proxy_indexes]
         for index in selection:
-            self.tree.selectionModel().select(
+            tree.selectionModel().select(
                 index,
                 QItemSelectionModel.SelectionFlag.Deselect |
                 QItemSelectionModel.SelectionFlag.Rows
@@ -1633,11 +1657,9 @@ class NextTask(QMainWindow):
 
     def click_press(self, pindex):
         index = self.proxy.mapToSource(pindex)
-
-        self.first_task = self.active_task = index.row()
+        self.active_task = index.row()
 
     def click_release(self):
-        self.first_task = None
         if self.doubleClicked:
             self.doubleClicked = False
             return
