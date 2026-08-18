@@ -1706,35 +1706,45 @@ class NextTask(QMainWindow):
 
     def export_tasks(self, tree):
         fname, _ = QFileDialog.getSaveFileName(w, 'Save File', str(app_dir), filter='Text Files (*.txt)')
-        if fname:
-            if not fname.lower().endswith('.txt'):
-                fname += '.txt'
+        if not fname:
+            return
+        
+        if not fname.lower().endswith('.txt'):
+            fname += '.txt'
 
-            with open(fname, 'w', encoding='utf-8') as f:
-                model = tree.model().sourceModel()
-                row_items_list = [
-                    [
-                        model.item(row, column)
-                        for column in range(model.columnCount())
-                    ]
-                    for row in range(model.rowCount())
+        with open(fname, 'w', encoding='utf-8') as f:
+            model = tree.model().sourceModel()
+            row_items_list = [
+                [
+                    model.item(row, column)
+                    for column in range(model.columnCount())
                 ]
+                for row in range(model.rowCount())
+            ]
 
-                row_items_list.sort(key=lambda row_items: int(row_items[0].text()))
+            row_items_list.sort(key=lambda row_items: int(row_items[0].text()))
 
-                if tree == self.tree:
-                    for row_items in row_items_list:
-                        f.write(", ".join([item.text() for item in row_items]))
-                        f.write('\n')
-                elif tree == self.tree_completed:
-                    for row_items in row_items_list:
-                        f.write(f"{row_items[0].data(Qt.ItemDataRole.UserRole)}, ")
-                        f.write(", ".join([item.text() for item in row_items[1:3]]))
-                        f.write(f", [{row_items[3].text()}]")
-                        if row_items[5]:
-                            f.write(f", {row_items[5].data(Qt.ItemDataRole.UserRole).isoformat()}")
-                        f.write(f", {row_items[6].text()}")
-                        f.write('\n')
+            if tree == self.tree:
+                for row_items in row_items_list:
+                    f.write(", ".join([item.text() for item in row_items]))
+                    f.write('\n')
+            elif tree == self.tree_completed:
+                for row_items in row_items_list:
+                    f.write(f"{row_items[0].data(Qt.ItemDataRole.UserRole)}, ")
+                    f.write(", ".join([item.text() for item in row_items[1:3]]))
+                    f.write(f", [{row_items[3].text()}]")
+                    if row_items[5]:
+                        f.write(f", {row_items[5].data(Qt.ItemDataRole.UserRole).isoformat()}")
+                    f.write(f", {row_items[6].text()}")
+                    f.write('\n')
+
+                if (Path(self.notes_url).is_dir() and any(self.notes_url.iterdir())
+                    and QMessageBox.question(self, 'Backup Notes?', 'Do you also want to export the Notes folder?') == QMessageBox.Yes):
+                    folder = QFileDialog.getExistingDirectory(self, "Select where to save", str(app_dir))
+
+                    if folder:
+                        destination = Path(folder) / self.notes_url.name
+                        shutil.copytree(self.notes_url, destination, dirs_exist_ok=True)
                     
 
     def import_tasks(self, db):
