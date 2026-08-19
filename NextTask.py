@@ -155,7 +155,7 @@ helptext = f"""
 Patterns:   {expl[0]}
             {expl[1]}
             {expl[2]}
-            {expl[3]}.
+            {expl[3]}
 """
 
 bt_style_tabs = """
