@@ -155,11 +155,7 @@ helptext = f"""
 Patterns:   {expl[0]}
             {expl[1]}
             {expl[2]}
-            {expl[3]}
-
-If you want to edit the completed tasks you can:\n1) Export .txt file\n2) Delete completed.db\n3) Open \
-the exported .txt file with a notepad\n4) Make your edits\n5) Import the new txt file\nThe pattern needs to be the \
-same as before, for them to appear.
+            {expl[3]}.
 """
 
 bt_style_tabs = """
