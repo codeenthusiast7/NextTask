@@ -174,7 +174,7 @@ bt_style_tabs = """
 
 settings = QSettings("NextTask", "NextTask")
 
-def cleanup():
+def update_row_pos():
     if w.movedRows:
         conn = sqlite3.connect(app_dir / 'tasks.db')
         c = conn.cursor()
@@ -197,6 +197,8 @@ def cleanup():
                 break
         conn.commit()
         conn.close()
+
+        w.movedRows = False
 
 
 def arithmise(model):
@@ -1002,6 +1004,7 @@ class NextTask(QMainWindow):
 
 
         def update_task():
+            update_row_pos()
             proxy_indexes = self.tree.selectionModel().selectedRows()
             source_indexes = [self.proxy.mapToSource(pindex) for pindex in proxy_indexes]
             selection_rowids = [self.tree_model.itemFromIndex(sindex).data(Qt.ItemDataRole.UserRole) for sindex in source_indexes]
@@ -1044,7 +1047,7 @@ class NextTask(QMainWindow):
             command = f"SELECT * FROM tasks WHERE rowid in ({', '.join('?' for _ in selection_rowids)})"
             c.execute(command, selection_rowids)
             for task in c.fetchall():
-                for column, value in enumerate(task[1:]):
+                for column, value in enumerate(task[1:]):  # 0 is row_pos
                     if columns[column] in changes:
                         self.tree_model.item(task[0] - 1, column + 1).setText(str(value))
             conn.commit()
@@ -1944,7 +1947,7 @@ class NextTask(QMainWindow):
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
-    app.aboutToQuit.connect(cleanup)
+    app.aboutToQuit.connect(update_row_pos)
     w = NextTask()
     w.showMaximized()
     sys.exit(app.exec())
