@@ -1051,6 +1051,8 @@ class NextTask(QMainWindow):
 
         def add_task():
             for n, entry in enumerate([self.qle_name, self.qle_wgt, self.qle_onoff]):
+                if entry in (self.qle_wgt, self.qle_onoff) and not entry.text():
+                    entry.setText('1')
                 reg = re.match(patterns[n], entry.text())
                 if not reg:
                     QMessageBox.warning(self, 'Error', 'Unable to read input.\n' + expl[n])
@@ -1657,7 +1659,8 @@ class NextTask(QMainWindow):
 
     def click_press(self, pindex):
         index = self.proxy.mapToSource(pindex)
-        self.active_task = index.row()
+        if index.row() != -1:
+            self.active_task = index.row()
 
     def click_release(self):
         if self.doubleClicked:
