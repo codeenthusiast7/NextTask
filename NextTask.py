@@ -1575,6 +1575,7 @@ class NextTask(QMainWindow):
         if QMessageBox.question(self, 'Apply', 'Apply the weights?') != QMessageBox.Yes:
             return
 
+        update_row_pos()
         conn = sqlite3.connect(app_dir / 'tasks.db')
         c = conn.cursor()
         for i in range(len(self.ewm_rows)):
