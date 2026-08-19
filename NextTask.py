@@ -197,7 +197,7 @@ def update_row_pos():
         w.movedRows = False
 
 
-def arithmise(model):
+def numerate(model):
     for row in range(model.rowCount()):
         item = model.item(row, 0)
 
@@ -1137,7 +1137,7 @@ class NextTask(QMainWindow):
                 model.removeRow(row)
             conn.commit()
             conn.close()
-            arithmise(model)
+            numerate(model)
 
         def up():
             selection_model = self.tree.selectionModel()
@@ -1181,7 +1181,7 @@ class NextTask(QMainWindow):
                         QItemSelectionModel.SelectionFlag.Select
                         | QItemSelectionModel.SelectionFlag.Rows
                     )
-                arithmise(self.tree_model)
+                numerate(self.tree_model)
 
         def down():
             selection_model = self.tree.selectionModel()
@@ -1231,7 +1231,7 @@ class NextTask(QMainWindow):
                         QItemSelectionModel.SelectionFlag.Select
                         | QItemSelectionModel.SelectionFlag.Rows
                     )
-                arithmise(self.tree_model)
+                numerate(self.tree_model)
 
         def double_click(index):  # focuses the entry when clicking a value in the treeview
             if not index.isValid():
