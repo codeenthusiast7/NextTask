@@ -1,6 +1,8 @@
 # NextTask
 NextTask is a task randomizer and a completed tasks archive.
 
+Makes doing daunting tasks feel easier to approach by giving you a random beginning point (basically a randomizer) and also more rewarding by allowing you to keep an archive of all of your completed tasks and save notes/files for each one so you'll never worry that you will forget what you learned/did.
+
 Example name input: Thermodynamics
 
 Example weight input: 1
@@ -16,5 +18,7 @@ Choice type selection can have their own weights inside (0 to turn off). Example
 Click on the labels to edit only a specific column for a selected task.
 
 "Find weights based on chance" from Edit menu lets you give tasks your own chance to be chosen.
+
+Upcoming features: search field, to search through the "keywords" column of completed tasks.
 
 Credits to Codemy.com on youtube for teaching me about treeview, basic GUI stuff and for inspiring the layout. (https://www.youtube.com/watch?v=G9seoA3Mv4Y)
