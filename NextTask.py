@@ -1043,11 +1043,19 @@ class NextTask(QMainWindow):
             command = f"SELECT * FROM tasks WHERE rowid in ({', '.join('?' for _ in selection_rowids)})"
             c.execute(command, selection_rowids)
             for task in c.fetchall():
-                for column, value in enumerate(task[1:]):  # 0 is row_pos
+                for column, value in enumerate(task[1:]):  # task[0] is row_pos
                     if columns[column] in changes:
+                        if column == 0 and self.memory[0] == self.tree_model.item(task[0] - 1, 1).text():
+                            self.memory[0] = self.qle_name.text()
                         self.tree_model.item(task[0] - 1, column + 1).setText(str(value))
             conn.commit()
             conn.close()
+
+            if self.memory:
+                if "randomizer" in changes and self.memory[0] == self.qle_name.text():
+                    self.memory[1] = list(re.finditer(patterns[3], self.qle_routput.text()))
+                    self.memory[2] = [m.span() for m in self.memory[1]]
+
 
         def add_task():
             for n, entry in enumerate([self.qle_name, self.qle_wgt, self.qle_onoff]):
