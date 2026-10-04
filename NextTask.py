@@ -24,7 +24,11 @@ data_dir = Path(
 
 data_dir.mkdir(parents=True, exist_ok=True)
 
-app_dir = data_dir
+notes_url = data_dir / 'Notes'
+notes_url.mkdir(exist_ok=True)
+
+tasks_db = data_dir / "tasks.db"
+completed_db = data_dir / "completed.db"
 
 if sys.platform == "win32":
     default_fg = "SystemButtonText"
@@ -174,7 +178,7 @@ settings = QSettings("NextTask", "NextTask")
 
 def update_row_pos():
     if w.movedRows:
-        conn = sqlite3.connect(app_dir / 'tasks.db')
+        conn = sqlite3.connect(tasks_db)
         c = conn.cursor()
         c.execute('SELECT rowid, * FROM tasks')
         tasks = c.fetchall()
@@ -341,9 +345,6 @@ class NextTask(QMainWindow):
         self.ewm_chances = []
         self.ewm_all_rows = []
 
-        self.notes_url = app_dir / 'Notes'
-        self.notes_url.mkdir(exist_ok=True)
-
         central = QWidget()
         self.setCentralWidget(central)
 
@@ -356,7 +357,7 @@ class NextTask(QMainWindow):
         file_menu = menubar.addMenu('File')
 
         import_tasks_action = file_menu.addAction('Import tasks')
-        import_tasks_action.triggered.connect(lambda: self.import_tasks('tasks.db'))
+        import_tasks_action.triggered.connect(lambda: self.import_tasks(tasks_db))
 
         export_tasks_action = file_menu.addAction('Export tasks')
         export_tasks_action.triggered.connect(lambda: self.export_tasks(self.tree))
@@ -364,7 +365,7 @@ class NextTask(QMainWindow):
         file_menu.addSeparator()
 
         import_completed_action = file_menu.addAction('Import completed tasks')
-        import_completed_action.triggered.connect(lambda: self.import_tasks('completed.db'))
+        import_completed_action.triggered.connect(lambda: self.import_tasks(completed_db))
 
         export_completed_action = file_menu.addAction('Export completed tasks')
         export_completed_action.triggered.connect(lambda: self.export_tasks(self.tree_completed))
@@ -773,7 +774,7 @@ class NextTask(QMainWindow):
 
                 completitions = int(self.tree_model_completed.item(row_found, 6).text()) + 1
 
-                conn = sqlite3.connect(app_dir / 'completed.db')
+                conn = sqlite3.connect(completed_db)
                 c = conn.cursor()
                 c.execute('''
                     UPDATE tasks
@@ -822,7 +823,7 @@ class NextTask(QMainWindow):
                 def store_files():
                     nonlocal fnames
 
-                    selected, _ = QFileDialog.getOpenFileNames(self, 'Select Files', str(app_dir))
+                    selected, _ = QFileDialog.getOpenFileNames(self, 'Select Files', str(data_dir))
 
                     if selected:
                         fnames = selected
@@ -844,7 +845,7 @@ class NextTask(QMainWindow):
                 task_stripped = reg.group('task')
                 if task_stripped is None:
                     task_stripped = ""
-                conn = sqlite3.connect(app_dir / 'completed.db')
+                conn = sqlite3.connect(completed_db)
                 c = conn.cursor()
                 datetime_obj = datetime.now()
                 c.execute('''INSERT INTO tasks VALUES (
@@ -865,7 +866,7 @@ class NextTask(QMainWindow):
                 })
 
                 rowid = c.lastrowid
-                folder_url = self.notes_url / f'{rowid}'  # .../Notes/1
+                folder_url = notes_url / f'{rowid}'  # .../Notes/1
 
                 c.execute('''
                     UPDATE tasks
@@ -879,7 +880,7 @@ class NextTask(QMainWindow):
                 if fnames:
                     folder_url.mkdir(exist_ok=True)
                     for fname in fnames:
-                        shutil.move(fname, folder_url)
+                        shutil.copy2(fname, folder_url)
 
                 row_items = [
                     QStandardItem(str(self.tree_model_completed.rowCount() + 1)),
@@ -894,7 +895,7 @@ class NextTask(QMainWindow):
                 row_items[0].setData(self.tree_model_completed.rowCount() + 1, Qt.ItemDataRole.UserRole + 1)
                 row_items[2].setData(full_task, Qt.ItemDataRole.UserRole)
                 if fnames:
-                    row_items[4].setIcon(QIcon(str(app_dir / "icons" / "folder.svg")))
+                    row_items[4].setIcon(QIcon(str(data_dir / "icons" / "folder.svg")))
                 row_items[4].setData(folder_url, Qt.ItemDataRole.UserRole)
                 row_items[5].setData(datetime_obj, Qt.ItemDataRole.UserRole)
                 row_items[6].setTextAlignment(Qt.AlignCenter)
@@ -1030,7 +1031,7 @@ class NextTask(QMainWindow):
                 if not self.randomizer_check(self.qle_routput.text(), 2):
                     return
                 changes.append("randomizer")
-            conn = sqlite3.connect(app_dir / 'tasks.db')
+            conn = sqlite3.connect(tasks_db)
             c = conn.cursor()
             command = f"UPDATE tasks SET {','.join([f"{change} = :{change}" for change in changes])} WHERE rowid = :rowid"
             for rowid in selection_rowids:
@@ -1087,7 +1088,7 @@ class NextTask(QMainWindow):
                         continue
 
             self.qle_routput.setText(self.randomizer_check(self.qle_routput.text(), 1))
-            conn = sqlite3.connect(app_dir / 'tasks.db')
+            conn = sqlite3.connect(tasks_db)
             c = conn.cursor()
             c.execute('''INSERT INTO tasks VALUES
                     (
@@ -1122,13 +1123,13 @@ class NextTask(QMainWindow):
 
         def remove_selected():
             if self.tree.isVisible():
-                db = 'tasks.db'
+                db = tasks_db
                 model = self.tree_model
                 selection_model = self.tree.selectionModel()
                 proxy_indexes = selection_model.selectedRows()
                 selection = [self.proxy.mapToSource(pindex) for pindex in proxy_indexes]
             elif self.tree_completed.isVisible():
-                db = 'completed.db'
+                db = completed_db
                 model = self.tree_model_completed
                 selection_model = self.tree_completed.selectionModel()
                 selection = selection_model.selectedRows()
@@ -1139,7 +1140,7 @@ class NextTask(QMainWindow):
                 return
             if QMessageBox.question(self, 'Warning!', 'Delete the selected tasks?') != QMessageBox.Yes:
                 return
-            conn = sqlite3.connect(app_dir / db)
+            conn = sqlite3.connect(db)
             c = conn.cursor()
             rows = sorted({index.row() for index in selection}, reverse=True)
             for row in rows:
@@ -1296,7 +1297,7 @@ class NextTask(QMainWindow):
                 def store_files():
                     nonlocal fnames
 
-                    selected, _ = QFileDialog.getOpenFileNames(self, 'Select Files', str(app_dir))
+                    selected, _ = QFileDialog.getOpenFileNames(self, 'Select Files', str(data_dir))
 
                     if selected:
                         fnames = selected
@@ -1315,15 +1316,15 @@ class NextTask(QMainWindow):
                     return
 
                 rowid = self.tree_model_completed.item(index.row(), 4).data(Qt.ItemDataRole.UserRole)
-                folder_url = self.notes_url / f'{rowid}'
+                folder_url = notes_url / f'{rowid}'
 
                 if fnames:
                     if not Path(folder_url).is_dir():
-                        self.tree_model_completed.item(index.row(), 4).setIcon(QIcon(str(app_dir / "icons" / "folder.svg")))
+                        self.tree_model_completed.item(index.row(), 4).setIcon(QIcon(str(data_dir / "icons" / "folder.svg")))
 
                     folder_url.mkdir(exist_ok=True)
                     for fname in fnames:
-                        shutil.move(fname, folder_url)
+                        shutil.copy2(fname, folder_url)
 
 
         # Connections
@@ -1359,7 +1360,7 @@ class NextTask(QMainWindow):
 
 
         def create_databases():
-            conn = sqlite3.connect(app_dir / 'tasks.db')
+            conn = sqlite3.connect(tasks_db)
             c = conn.cursor()
             c.execute('''CREATE TABLE if not exists tasks (
                     row_pos integer,
@@ -1370,7 +1371,7 @@ class NextTask(QMainWindow):
                     ''')
             conn.commit()
             conn.close()
-            conn = sqlite3.connect(app_dir / 'completed.db')
+            conn = sqlite3.connect(completed_db)
             c = conn.cursor()
             c.execute('''CREATE TABLE if not exists tasks (
                     name text,
@@ -1384,7 +1385,7 @@ class NextTask(QMainWindow):
             conn.close()
 
         def query_database():
-            conn = sqlite3.connect(app_dir / 'tasks.db')
+            conn = sqlite3.connect(tasks_db)
             c = conn.cursor()
             c.execute('SELECT rowid, * FROM tasks') # rowid is first so it is task[0]
             tasks = c.fetchall()
@@ -1404,7 +1405,7 @@ class NextTask(QMainWindow):
                 row_items[3].setTextAlignment(Qt.AlignCenter)
                 self.tree_model.appendRow(row_items)
 
-            conn = sqlite3.connect(app_dir / 'completed.db')
+            conn = sqlite3.connect(completed_db)
             c = conn.cursor()
             c.execute('SELECT rowid, * FROM tasks')
             ctasks = c.fetchall()
@@ -1430,7 +1431,7 @@ class NextTask(QMainWindow):
                 row_items[0].setData(n + 1, Qt.ItemDataRole.UserRole + 1)
                 row_items[2].setData(f"{ctask[1]}, {ctask[2]}", Qt.ItemDataRole.UserRole)
                 if Path(ctask[4]).is_dir():
-                    row_items[4].setIcon(QIcon(str(app_dir / "icons" / "folder.svg")))
+                    row_items[4].setIcon(QIcon(str(data_dir / "icons" / "folder.svg")))
                 row_items[4].setData(ctask[4], Qt.ItemDataRole.UserRole)
                 row_items[5].setData(datetime_obj, Qt.ItemDataRole.UserRole)
                 row_items[6].setTextAlignment(Qt.AlignCenter)
@@ -1584,7 +1585,7 @@ class NextTask(QMainWindow):
             return
 
         update_row_pos()
-        conn = sqlite3.connect(app_dir / 'tasks.db')
+        conn = sqlite3.connect(tasks_db)
         c = conn.cursor()
         for i in range(len(self.ewm_rows)):
             selection_rowids = [self.tree_model.item(row, 0).data(Qt.ItemDataRole.UserRole) for row in self.ewm_rows[i]]
@@ -1718,7 +1719,7 @@ class NextTask(QMainWindow):
         return rizer
 
     def export_tasks(self, tree):
-        fname, _ = QFileDialog.getSaveFileName(w, 'Save File', str(app_dir), filter='Text Files (*.txt)')
+        fname, _ = QFileDialog.getSaveFileName(w, 'Save File', str(data_dir), filter='Text Files (*.txt)')
         if not fname:
             return
         
@@ -1751,13 +1752,13 @@ class NextTask(QMainWindow):
                     f.write(f", {row_items[6].text()}")
                     f.write('\n')
 
-                if (Path(self.notes_url).is_dir() and any(self.notes_url.iterdir())
+                if (Path(notes_url).is_dir() and any(notes_url.iterdir())
                     and QMessageBox.question(self, 'Backup Notes?', 'Do you also want to export the Notes folder?') == QMessageBox.Yes):
-                    folder = QFileDialog.getExistingDirectory(self, "Select where to save", str(app_dir))
+                    folder = QFileDialog.getExistingDirectory(self, "Select where to save", str(data_dir))
 
                     if folder:
-                        destination = Path(folder) / self.notes_url.name
-                        shutil.copytree(self.notes_url, destination, dirs_exist_ok=True)
+                        destination = Path(folder) / notes_url.name
+                        shutil.copytree(notes_url, destination, dirs_exist_ok=True)
                     
 
     def import_tasks(self, db):
@@ -1795,7 +1796,7 @@ class NextTask(QMainWindow):
             def select_file():
                 nonlocal fname
 
-                selected, _ = QFileDialog.getOpenFileName(self, 'Select file', str(app_dir))
+                selected, _ = QFileDialog.getOpenFileName(self, 'Select file', str(data_dir))
 
                 if selected:
                     fname = selected
@@ -1804,7 +1805,7 @@ class NextTask(QMainWindow):
             def select_notes():
                 nonlocal notes_import
 
-                folder = QFileDialog.getExistingDirectory(self, "Select 'Notes' Folder", str(app_dir))
+                folder = QFileDialog.getExistingDirectory(self, "Select 'Notes' Folder", str(data_dir))
 
                 if folder:
                     notes_import = Path(folder)
@@ -1821,17 +1822,17 @@ class NextTask(QMainWindow):
             if dialog.exec() == QDialog.DialogCode.Rejected:
                 return
         else:
-            fname, _ = QFileDialog.getOpenFileName(self, 'Open File', str(app_dir), filter='Text Files (*.txt)')
+            fname, _ = QFileDialog.getOpenFileName(self, 'Open File', str(data_dir), filter='Text Files (*.txt)')
 
         if fname:
             try:
                 with open(fname, 'r', encoding='utf-8') as f:
-                    conn = sqlite3.connect(app_dir / db)
+                    conn = sqlite3.connect(db)
                     c = conn.cursor()
                     c.execute('SELECT * FROM tasks')
                     rows = c.fetchall()
                     lines = f.readlines()
-                    if db == 'tasks.db':
+                    if db == tasks_db:
                         row_items_list = []
                         cnames = [row[1] for row in rows]
                         for line in lines:
@@ -1873,7 +1874,7 @@ class NextTask(QMainWindow):
                             row_items_list.sort(key=lambda row_items: int(row_items[0].text()))
                             for row_items in row_items_list:
                                 self.tree_model.appendRow(row_items)
-                    elif db == 'completed.db':
+                    elif db == completed_db:
                         ctasks = [row[1] for row in rows]
                         for line in lines:
                             reg = re.match(pattern_import_ctasks, line)
@@ -1908,7 +1909,7 @@ class NextTask(QMainWindow):
                                           })
 
                                 rowid = c.lastrowid
-                                folder_url = self.notes_url / f'{rowid}'
+                                folder_url = notes_url / f'{rowid}'
 
                                 c.execute('''
                                     UPDATE tasks
@@ -1922,7 +1923,7 @@ class NextTask(QMainWindow):
                                 if notes_import:
                                     folder_url.mkdir(exist_ok=True)
                                     for file in (notes_import / sql_ID).iterdir():
-                                        shutil.move(file, folder_url)
+                                        shutil.copy2(file, folder_url)
 
                                 row_items = [
                                     QStandardItem(str(self.tree_model_completed.rowCount() + 1)),
