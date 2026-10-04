@@ -4,25 +4,27 @@ from PySide6.QtWidgets import (
     QPushButton, QLabel, QLineEdit, QTextEdit, QTreeView, QFileDialog,
     QMessageBox, QSplitter, QFrame, QSizePolicy, QAbstractItemView
 )
-from PySide6.QtGui import QFont, QColor, QTextCursor, QTextCharFormat, QStandardItemModel, QStandardItem, QIcon, QBrush
-from PySide6.QtCore import Qt, QItemSelectionModel, QSortFilterProxyModel, QObject, Signal, QSettings
+from PySide6.QtGui import QFont, QColor, QTextCursor, QTextCharFormat, QStandardItemModel, QStandardItem, QIcon, QBrush, QDesktopServices
+from PySide6.QtCore import Qt, QItemSelectionModel, QSortFilterProxyModel, QObject, Signal, QSettings, QStandardPaths, QUrl
 import sys
 import sqlite3
 import random
 import re
 from string import ascii_lowercase
-import numpy as np
 from datetime import datetime
 import shutil
-import subprocess
 from fractions import Fraction
 from math import lcm
 
-if getattr(sys, 'frozen', False):
-    # Path(sys.executable).resolve().parent points to App/
-    app_dir = Path(sys._MEIPASS)  # points to App/_internal/
-else:
-    app_dir = Path(__file__).resolve().parent
+data_dir = Path(
+    QStandardPaths.writableLocation(
+        QStandardPaths.StandardLocation.AppLocalDataLocation
+    )
+) / "NextTask"
+
+data_dir.mkdir(parents=True, exist_ok=True)
+
+app_dir = data_dir
 
 if sys.platform == "win32":
     default_fg = "SystemButtonText"
@@ -742,7 +744,7 @@ class NextTask(QMainWindow):
                     temp.append([item_name, item_weight, item_randomizer])
             if not temp:
                 return "All tasks are set to OFF"
-            temp = random.choices(temp, weights=[int(n) for n in np.array(temp)[:, 1].tolist()])[0]
+            temp = random.choices(temp, weights=[int(n[1]) for n in temp])[0]
             del temp[1]  # deletes item_weight
             self.memory = [temp[0]]
             txt_routput.setReadOnly(False)
@@ -1265,7 +1267,7 @@ class NextTask(QMainWindow):
 
             path = self.tree_model_completed.item(index.row(), 4).data(Qt.ItemDataRole.UserRole)
             if Path(path).is_dir():
-                subprocess.Popen(["xdg-open", path])
+                QDesktopServices.openUrl(QUrl.fromLocalFile(path))
             else:
                 dialog = QDialog(self)
                 dialog.setWindowTitle("Upload files menu")
