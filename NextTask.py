@@ -15,6 +15,7 @@ from datetime import datetime
 import shutil
 from fractions import Fraction
 from math import lcm
+import resources_rc
 
 data_dir = Path(
     QStandardPaths.writableLocation(
@@ -29,6 +30,8 @@ notes_url.mkdir(exist_ok=True)
 
 tasks_db = data_dir / "tasks.db"
 completed_db = data_dir / "completed.db"
+
+icon_folder_dir = ":/resources/icons/folder.svg"
 
 if sys.platform == "win32":
     default_fg = "SystemButtonText"
@@ -895,7 +898,7 @@ class NextTask(QMainWindow):
                 row_items[0].setData(self.tree_model_completed.rowCount() + 1, Qt.ItemDataRole.UserRole + 1)
                 row_items[2].setData(full_task, Qt.ItemDataRole.UserRole)
                 if fnames:
-                    row_items[4].setIcon(QIcon(str(data_dir / "icons" / "folder.svg")))
+                    row_items[4].setIcon(QIcon(icon_folder_dir))
                 row_items[4].setData(folder_url, Qt.ItemDataRole.UserRole)
                 row_items[5].setData(datetime_obj, Qt.ItemDataRole.UserRole)
                 row_items[6].setTextAlignment(Qt.AlignCenter)
@@ -1320,7 +1323,7 @@ class NextTask(QMainWindow):
 
                 if fnames:
                     if not Path(folder_url).is_dir():
-                        self.tree_model_completed.item(index.row(), 4).setIcon(QIcon(str(data_dir / "icons" / "folder.svg")))
+                        self.tree_model_completed.item(index.row(), 4).setIcon(QIcon(icon_folder_dir))
 
                     folder_url.mkdir(exist_ok=True)
                     for fname in fnames:
@@ -1431,7 +1434,7 @@ class NextTask(QMainWindow):
                 row_items[0].setData(n + 1, Qt.ItemDataRole.UserRole + 1)
                 row_items[2].setData(f"{ctask[1]}, {ctask[2]}", Qt.ItemDataRole.UserRole)
                 if Path(ctask[4]).is_dir():
-                    row_items[4].setIcon(QIcon(str(data_dir / "icons" / "folder.svg")))
+                    row_items[4].setIcon(QIcon(icon_folder_dir))
                 row_items[4].setData(ctask[4], Qt.ItemDataRole.UserRole)
                 row_items[5].setData(datetime_obj, Qt.ItemDataRole.UserRole)
                 row_items[6].setTextAlignment(Qt.AlignCenter)
