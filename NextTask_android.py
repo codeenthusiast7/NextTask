@@ -1005,4 +1005,445 @@ class NextTask(QMainWindow):
         edit_frame_2.setVisible(False)
 
 
- 
+        def update_task():
+            update_row_pos()
+            proxy_indexes = self.tree.selectionModel().selectedRows()
+            source_indexes = [self.proxy.mapToSource(pindex) for pindex in proxy_indexes]
+            selection_rowids = [self.tree_model.itemFromIndex(sindex).data(Qt.ItemDataRole.UserRole) for sindex in source_indexes]
+            if not selection_rowids:
+                self.txt_main.append('There is no task selected. Select a task in the task table.')
+                return
+            if len(selection_rowids) > 1 and (not self.focused or self.qle_name in self.focused):
+                if QMessageBox.warning(self, 'Warning', 'Do you really want to give multiple tasks the same name?',
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) != QMessageBox.Yes:
+                    return
+            columns = ["name",
+                       "weight",
+                       "onoff",
+                       "randomizer"]
+            changes = []
+            for n, entry in enumerate([self.qle_name, self.qle_wgt, self.qle_onoff]):
+                if not self.focused or entry in self.focused:
+                    reg = re.match(patterns[n], entry.text())
+                    if not reg:
+                        QMessageBox.warning(self, 'Warning', 'Unable to read input. At:\n' + expl[n])
+                        entry.setFocus()
+                        return
+                    changes.append(columns[n])
+            if not self.focused or self.qle_routput in self.focused:
+                if not self.randomizer_check(self.qle_routput.text(), 2):
+                    return
+                changes.append("randomizer")
+            conn = sqlite3.connect(tasks_db)
+            c = conn.cursor()
+            command = f"UPDATE tasks SET {','.join([f"{change} = :{change}" for change in changes])} WHERE rowid = :rowid"
+            for rowid in selection_rowids:
+                c.execute(command, 
+                          {
+                              'name': self.qle_name.text(),
+                              'weight': self.qle_wgt.text(),
+                              'onoff': self.qle_onoff.text(),
+                              'randomizer': self.qle_routput.text(),
+                              'rowid': rowid
+                          })
+            command = f"SELECT * FROM tasks WHERE rowid in ({', '.join('?' for _ in selection_rowids)})"
+            c.execute(command, selection_rowids)
+            for task in c.fetchall():
+                for column, value in enumerate(task[1:]):  # task[0] is row_pos
+                    if columns[column] in changes:
+                        if column == 0 and self.memory[0] == self.tree_model.item(task[0] - 1, 1).text():
+                            self.memory[0] = self.qle_name.text()
+                        self.tree_model.item(task[0] - 1, column + 1).setText(str(value))
+            conn.commit()
+            conn.close()
+
+            if self.memory:
+                if "randomizer" in changes and self.memory[0] == self.qle_name.text():
+                    self.memory[1] = list(re.finditer(patterns[3], self.qle_routput.text()))
+                    self.memory[2] = [m.span() for m in self.memory[1]]
+
+
+        def add_task():
+            for n, entry in enumerate([self.qle_name, self.qle_wgt, self.qle_onoff]):
+                if entry in (self.qle_wgt, self.qle_onoff) and not entry.text():
+                    entry.setText('1')
+                reg = re.match(patterns[n], entry.text())
+                if not reg:
+                    QMessageBox.warning(self, 'Error', 'Unable to read input.\n' + expl[n])
+                    entry.setFocus()
+                    return
+                entry.setText(reg.group("target"))
+                if n == 0:
+                    name = entry.text()
+                    names = [self.tree_model.item(row, 1).text() for row in range(self.tree_model.rowCount())]
+                    if name in names:
+                        m = 0
+                        reg2 = re.match(pattern_duplic_name, name)
+                        if reg2:
+                            while name in names:
+                                m += 1
+                                name = str(int(reg2.group("num_dupe")) + m).join(name.rsplit(str(int(reg2.group("num_dupe")) + m - 1), 1))
+                            continue
+                        name += ' (1)'
+                        while name in names:
+                            m += 1
+                            name = str(1 + m).join(name.rsplit(str(m), 1))
+                        continue
+
+            self.qle_routput.setText(self.randomizer_check(self.qle_routput.text(), 1))
+            conn = sqlite3.connect(tasks_db)
+            c = conn.cursor()
+            c.execute('''INSERT INTO tasks VALUES
+                    (
+                    :row_pos,
+                    :name,
+                    :weight,
+                    :onoff,
+                    :randomizer
+                    )
+                ''', {
+                        'row_pos': str(self.tree_model.rowCount() + 1),
+                        'name': name,
+                        'weight': self.qle_wgt.text(),
+                        'onoff': self.qle_onoff.text(),
+                        'randomizer': self.qle_routput.text(),
+                    }
+            )
+            row_items = [
+                QStandardItem(str(self.tree_model.rowCount() + 1)),
+                QStandardItem(name),
+                QStandardItem(self.qle_wgt.text()),
+                QStandardItem(self.qle_onoff.text()),
+                QStandardItem(self.qle_routput.text()),
+            ]
+            row_items[0].setData(c.lastrowid, Qt.ItemDataRole.UserRole)
+            row_items[0].setData(self.tree_model.rowCount() + 1, Qt.ItemDataRole.UserRole + 1)
+            row_items[2].setTextAlignment(Qt.AlignCenter)
+            row_items[3].setTextAlignment(Qt.AlignCenter)
+            self.tree_model.appendRow(row_items)
+            conn.commit()
+            conn.close()
+
+        def remove_selected():
+            if self.tree.isVisible():
+                db = tasks_db
+                model = self.tree_model
+                selection_model = self.tree.selectionModel()
+                proxy_indexes = selection_model.selectedRows()
+                selection = [self.proxy.mapToSource(pindex) for pindex in proxy_indexes]
+            elif self.tree_completed.isVisible():
+                db = completed_db
+                model = self.tree_model_completed
+                selection_model = self.tree_completed.selectionModel()
+                selection = selection_model.selectedRows()
+            else:
+                return
+        
+            if not selection:
+                return
+            if QMessageBox.question(self, 'Warning!', 'Delete the selected tasks?') != QMessageBox.Yes:
+                return
+            conn = sqlite3.connect(db)
+            c = conn.cursor()
+            rows = sorted({index.row() for index in selection}, reverse=True)
+            for row in rows:
+                row_item = model.item(row, 0)
+                rowid = int(row_item.data(Qt.ItemDataRole.UserRole))
+                c.execute('DELETE from tasks WHERE rowid=?', (rowid,))
+                model.removeRow(row)
+            conn.commit()
+            conn.close()
+            numerate(model)
+
+        def up():
+            selection_model = self.tree.selectionModel()
+            selection = selection_model.selectedRows()
+
+            if selection:
+                header = self.tree.header()
+
+                if header.isSortIndicatorShown():
+                    sort_column = header.sortIndicatorSection()
+                    sort_order = header.sortIndicatorOrder()
+                    if sort_order == Qt.SortOrder.DescendingOrder:
+                        selection = [self.proxy.mapToSource(pindex) for pindex in selection]
+                else:
+                    return
+
+                if sort_column != 0:
+                    self.txt_main.append("Moving rows only works when 'No.' column is sorted.")
+                    return
+                
+                for index in selection:
+                    row = index.row()
+
+                    if sort_order == Qt.SortOrder.AscendingOrder:
+                        if row == 0:
+                            continue
+                        items = self.tree_model.takeRow(row)
+                        items[0].setText(str(row))
+                        items[0].setData(row, Qt.ItemDataRole.UserRole + 1)
+                        self.tree_model.insertRow(row - 1, items)
+                    else:
+                        if row == self.tree_model.rowCount() - 1:
+                            continue
+                        items = self.tree_model.takeRow(row)
+                        items[0].setText(str(row + 2))
+                        items[0].setData(row + 2, Qt.ItemDataRole.UserRole + 1)
+                        self.tree_model.insertRow(row + 1, items)
+                        index = self.proxy.mapFromSource(self.tree_model.index(row + 1, index.column(), index.parent()))
+                    selection_model.select(
+                        index,
+                        QItemSelectionModel.SelectionFlag.Select
+                        | QItemSelectionModel.SelectionFlag.Rows
+                    )
+                numerate(self.tree_model)
+
+        def down():
+            selection_model = self.tree.selectionModel()
+            selection = selection_model.selectedRows()
+
+            if selection:
+                header = self.tree.header()
+
+                if header.isSortIndicatorShown():
+                    sort_column = header.sortIndicatorSection()
+                    sort_order = header.sortIndicatorOrder()
+                    if sort_order == Qt.SortOrder.DescendingOrder:
+                        selection = [self.proxy.mapToSource(pindex) for pindex in selection]
+                else:
+                    return
+
+                if sort_column != 0:
+                    self.txt_main.append("Moving rows only works when 'No.' column is sorted.")
+                    return
+
+                for index in reversed(selection):
+                    row = index.row()
+
+                    if sort_order == Qt.SortOrder.AscendingOrder:
+                        if row == self.tree_model.rowCount() - 1:
+                            continue
+                        items = self.tree_model.takeRow(row)
+                        items[0].setText(str(row + 2))
+                        items[0].setData(row + 2, Qt.ItemDataRole.UserRole + 1)
+                        self.tree_model.insertRow(row + 1, items)
+                    else:
+                        if row == 0:
+                            continue
+                        items = self.tree_model.takeRow(row)
+                        items[0].setText(str(row))
+                        items[0].setData(row, Qt.ItemDataRole.UserRole + 1)
+                        self.tree_model.insertRow(row - 1, items)
+
+                if sort_order == Qt.SortOrder.AscendingOrder:
+                    selection = [self.proxy.mapFromSource(self.tree_model.index(index.row() + 1, index.column(), index.parent())) for index in selection]
+                else:
+                    selection = [self.proxy.mapFromSource(self.tree_model.index(index.row() - 1, index.column(), index.parent())) for index in selection]
+                
+                for index in selection:
+                    selection_model.select(
+                        index,
+                        QItemSelectionModel.SelectionFlag.Select
+                        | QItemSelectionModel.SelectionFlag.Rows
+                    )
+                numerate(self.tree_model)
+
+        def double_click(index):  # focuses the entry when clicking a value in the treeview
+            if not index.isValid():
+                return
+
+            self.doubleClicked = True
+            entries = edit_frame_1.findChildren(QLineEdit)
+            column = index.column()
+            if column == 0:
+                entry = entries[0]
+            else:
+                entry = entries[column - 1]
+            entry.setFocus()
+            entry.selectAll()
+
+        def open_folder(index):
+            if not index.isValid() or index.column() != 4:
+                return
+
+            index = self.proxy_completed.mapToSource(index)
+
+            path = self.tree_model_completed.item(index.row(), 4).data(Qt.ItemDataRole.UserRole)
+            if Path(path).is_dir():
+                QDesktopServices.openUrl(QUrl.fromLocalFile(path))
+            else:
+                dialog = QDialog(self)
+                dialog.setWindowTitle("Upload files menu")
+                layout = QVBoxLayout(dialog)
+
+                frame_up = QFrame(dialog)
+                frame_down = QFrame(dialog)
+                layout.addWidget(frame_up)
+                layout.addWidget(frame_down)
+
+                layout_up = QGridLayout(frame_up)
+                layout_down = QHBoxLayout(frame_down)
+
+                lbl_files = QLabel("Upload files ")
+                bt_files = QPushButton("Upload")
+                layout_up.addWidget(lbl_files, 0, 0)
+                layout_up.addWidget(bt_files, 0, 1)
+
+                bt_cancel = QPushButton("Cancel")
+                bt_ok = QPushButton("OK")
+                layout_down.addWidget(bt_cancel)
+                layout_down.addWidget(bt_ok)
+
+                fnames = []
+
+                def store_files():
+                    nonlocal fnames
+
+                    selected, _ = QFileDialog.getOpenFileNames(self, 'Select Files', str(data_dir))
+
+                    if selected:
+                        fnames = selected
+                        if len(selected) > 1:
+                            bt_files.setText('Files selected')
+                        else:
+                            bt_files.setText('File selected')
+
+                bt_files.clicked.connect(store_files)
+                bt_cancel.clicked.connect(dialog.reject)
+                bt_ok.clicked.connect(dialog.accept)
+
+                dialog.adjustSize()
+
+                if dialog.exec() == QDialog.DialogCode.Rejected:
+                    return
+
+                rowid = self.tree_model_completed.item(index.row(), 4).data(Qt.ItemDataRole.UserRole)
+                folder_url = notes_url / f'{rowid}'
+
+                if fnames:
+                    if not Path(folder_url).is_dir():
+                        self.tree_model_completed.item(index.row(), 4).setIcon(QIcon(icon_folder_dir))
+
+                    folder_url.mkdir(exist_ok=True)
+                    for fname in fnames:
+                        shutil.copy2(fname, folder_url)
+
+
+        # Connections
+        bt_ewm_clear.clicked.connect(self.ewm_clear)
+        bt_ewm_add.clicked.connect(self.ewm_add_another)
+        bt_ewm_calculate.clicked.connect(self.ewm_find_weights)
+        bt_ewm_close.clicked.connect(self.show_hide_ewm)
+        bt_rl.clicked.connect(rl)
+        bt_rd.clicked.connect(rd)
+        bt_rt.clicked.connect(rt)
+        bt_clear.clicked.connect(lambda: self.txt_main.clear())
+        bt_complete.clicked.connect(complete)
+        bt_edit.clicked.connect(toggle_edit_frames)
+        bt_update.clicked.connect(update_task)
+        bt_add.clicked.connect(add_task)
+        bt_remove.clicked.connect(remove_selected)
+        bt_up.clicked.connect(up)
+        bt_down.clicked.connect(down)
+        bt_clear.clicked.connect(self.clear_entries)
+        bt_selectall.clicked.connect(self.select_all)
+        bt_left.clicked.connect(lambda: move(-1))
+        bt_right.clicked.connect(lambda: move(1))
+        bt_hold.clicked.connect(hold)
+        bt_tasks.clicked.connect(bt_call1)
+        bt_completed_tasks.clicked.connect(bt_call2)
+        self.qle_name.returnPressed.connect(update_task)
+        self.qle_wgt.returnPressed.connect(update_task)
+        self.qle_onoff.returnPressed.connect(update_task)
+        self.qle_routput.returnPressed.connect(update_task)
+        self.tree.doubleClicked.connect(double_click)
+        self.tree_completed.doubleClicked.connect(open_folder)
+        qle_current_task.textChanged.connect(lambda text: settings.setValue("NextTask", text))
+
+
+        def create_databases():
+            conn = sqlite3.connect(tasks_db)
+            c = conn.cursor()
+            c.execute('''CREATE TABLE if not exists tasks (
+                    row_pos integer,
+                    name text,
+                    weight integer,
+                    onoff integer,
+                    randomizer text)
+                    ''')
+            conn.commit()
+            conn.close()
+            conn = sqlite3.connect(completed_db)
+            c = conn.cursor()
+            c.execute('''CREATE TABLE if not exists tasks (
+                    name text,
+                    task text,
+                    keywords text,
+                    folder_url text,
+                    datetime text,
+                    completitions integer)
+                    ''')
+            conn.commit()
+            conn.close()
+
+        def query_database():
+            conn = sqlite3.connect(tasks_db)
+            c = conn.cursor()
+            c.execute('SELECT rowid, * FROM tasks') # rowid is first so it is task[0]
+            tasks = c.fetchall()
+            conn.close()
+            tasks.sort(key=lambda task: int(task[1]))
+            for task in tasks:
+                row_items = [
+                    QStandardItem(str(task[1])),
+                    QStandardItem(task[2]),
+                    QStandardItem(str(task[3])),
+                    QStandardItem(str(task[4])),
+                    QStandardItem(task[5] if task[5] else default_rizer),
+                ]
+                row_items[0].setData(task[0], Qt.ItemDataRole.UserRole)
+                row_items[0].setData(task[1], Qt.ItemDataRole.UserRole + 1)
+                row_items[2].setTextAlignment(Qt.AlignCenter)
+                row_items[3].setTextAlignment(Qt.AlignCenter)
+                self.tree_model.appendRow(row_items)
+
+            conn = sqlite3.connect(completed_db)
+            c = conn.cursor()
+            c.execute('SELECT rowid, * FROM tasks')
+            ctasks = c.fetchall()
+            conn.close()
+            for n, ctask in enumerate(ctasks):
+                if ctask[5]:
+                    datetime_obj = datetime.fromisoformat(ctask[5])
+                    datetime_strf = datetime_obj.strftime("%Y-%m-%d")
+                else:
+                    datetime_obj = None
+                    datetime_strf = None
+                self.total_score += ctask[6]
+                row_items = [
+                    QStandardItem(str(n + 1)),
+                    QStandardItem(ctask[1]),
+                    QStandardItem(ctask[2]),
+                    QStandardItem(ctask[3]),
+                    QStandardItem(''),
+                    QStandardItem(datetime_strf),
+                    QStandardItem(str(ctask[6])),
+                ]
+                row_items[0].setData(ctask[0], Qt.ItemDataRole.UserRole)
+                row_items[0].setData(n + 1, Qt.ItemDataRole.UserRole + 1)
+                row_items[2].setData(f"{ctask[1]}, {ctask[2]}", Qt.ItemDataRole.UserRole)
+                if Path(ctask[4]).is_dir():
+                    row_items[4].setIcon(QIcon(icon_folder_dir))
+                row_items[4].setData(ctask[4], Qt.ItemDataRole.UserRole)
+                row_items[5].setData(datetime_obj, Qt.ItemDataRole.UserRole)
+                row_items[6].setTextAlignment(Qt.AlignCenter)
+                self.tree_model_completed.appendRow(row_items)
+
+        create_databases()
+        query_database()
+
+        self.lbl_score_all.setText(f'Completed: {self.total_score}')
+        qle_current_task.setText(settings.value("NextTask", ""))
+
+
