@@ -33,10 +33,7 @@ completed_db = data_dir / "completed.db"
 
 icon_folder_dir = ":/resources/icons/folder.svg"
 
-if sys.platform == "win32":
-    default_fg = "SystemButtonText"
-else:
-    default_fg = "#000000"
+default_fg = "#000000"
 inactive_fg = "#505050"
 
 default_rizer = "Random [1-1000]"
@@ -260,12 +257,46 @@ def open_files(parent=None, filter=None):
     urls, _ = QFileDialog.getOpenFileUrls(
         parent,
         "Select Files",
-        QUrl(),                     # start location (empty = system default)
+        QUrl(str(data_dir)),                     # start location (empty = system default)
         "All Files (*);;Text Files (*.txt)",
         filter=filter,
         options=QFileDialog.Option.DontUseNativeDialog  # only if you force the Qt dialog
     )
 
+    if urls:
+        handle_urls(urls)
+
+
+def save_file(parent=None, filter=None):
+    # Prefer the URL-based versions on Android
+    url, _ = QFileDialog.getSaveFileUrl(
+        parent,
+        "Save File",
+        QUrl(str(data_dir)),                     # start location (empty = system default)
+        "All Files (*);;Text Files (*.txt)",
+        filter=filter,
+        options=QFileDialog.Option.DontUseNativeDialog  # only if you force the Qt dialog
+    )
+
+    if not url.isEmpty():
+        handle_urls([url])
+
+
+def select_directory(parent=None, caption="Select directory"):
+    # Prefer the URL-based versions on Android
+    url = QFileDialog.getExistingDirectoryUrl(
+        parent,
+        caption=caption,
+        QUrl(str(data_dir)),                     # start location (empty = system default)
+        options=QFileDialog.Option.DontUseNativeDialog,  # only if you force the Qt dialog
+        supportedSchemes=[]             # list of str, optional
+    )
+
+    if not url.isEmpty():
+        handle_urls([url]
+
+
+def handle_urls(urls):
     paths = []
     for url in urls:
         if url.isLocalFile():
@@ -273,11 +304,11 @@ def open_files(parent=None, filter=None):
         else:
             paths.append(url.toString())             # content:// URI  ← this is what you get most of the time
         
-        if len(paths) == 1:
-            return paths[0]
-        else:
-            return paths
-        # You can open it with QFile / pathlib / shutil later
+    if len(paths) == 1:
+        return paths[0]
+    else:
+        return paths
+    # You can open it with QFile / pathlib / shutil later
 
 
 class ErrorRedirector(QObject):
@@ -1747,7 +1778,7 @@ class NextTask(QMainWindow):
         return rizer
 
     def export_tasks(self, tree):
-        fname, _ = QFileDialog.getSaveFileName(w, 'Save File', str(data_dir), filter='Text Files (*.txt)')
+        fname, _ = save_file(w, filter='Text Files (*.txt)')
         if not fname:
             return
         
@@ -1782,7 +1813,7 @@ class NextTask(QMainWindow):
 
                 if (Path(notes_url).is_dir() and any(notes_url.iterdir())
                     and QMessageBox.question(self, 'Backup Notes?', 'Do you also want to export the Notes folder?') == QMessageBox.Yes):
-                    folder = QFileDialog.getExistingDirectory(self, "Select where to save", str(data_dir))
+                    folder = select_directory(self, "Select where to save")
 
                     if folder:
                         destination = Path(folder) / notes_url.name
@@ -1833,7 +1864,7 @@ class NextTask(QMainWindow):
             def select_notes():
                 nonlocal notes_import
 
-                folder = QFileDialog.getExistingDirectory(self, "Select 'Notes' Folder", str(data_dir))
+                folder = select_directory(self, "Select 'Notes' Folder")
 
                 if folder:
                     notes_import = Path(folder)
