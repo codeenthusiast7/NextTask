@@ -1447,3 +1447,521 @@ class NextTask(QMainWindow):
         qle_current_task.setText(settings.value("NextTask", ""))
 
 
+    def show_hide_ewm(self):
+        if self.txt_main.isVisible():
+            self.txt_main.hide()
+            self.frame_ewm.show()
+            self.qle_selection.setText(", ".join([str(self.proxy.mapToSource(pindex).row() + 1) for pindex in self.tree.selectionModel().selectedRows()]))
+        else:
+            self.frame_ewm.hide()
+            self.txt_main.show()
+            self.ewm_clear()
+
+    def ewm_clear(self):
+        for column in range(self.tree_model.columnCount()):
+            for row in self.ewm_all_rows:
+                self.tree_model.item(row, column).setBackground(QBrush())
+        self.ewm_rows.clear()
+        self.ewm_chances.clear()
+        self.ewm_all_rows.clear()
+        self.txt_ewm.clear()
+
+    def ewm_calc(self, sum_chance):
+        results = []
+        if sum_chance == 1:
+            fracs = []
+            for i in range(len(self.ewm_rows)):
+                n = len(self.ewm_rows[i])
+                chance = self.ewm_chances[i]
+                fracs.append(Fraction(str(chance)) / n)  # convert fraction to have integer numerators, useful for lowest common multiplier
+            results = [x * lcm(*[frac.denominator for frac in fracs]) for x in fracs]
+        else:
+            for i in range(len(self.ewm_rows)):
+                chance = self.ewm_chances[i]
+                n = len(self.ewm_rows[i])
+                rw = 0
+                for row in range(self.tree_model.rowCount()):
+                    if row not in self.ewm_all_rows and self.tree_model.item(row, 3).text() == '1':
+                        rw += int(self.tree_model.item(row, 2).text())
+
+                results.append(rw/n*chance/(1-sum_chance))
+
+        self.txt_ewm.clear()
+        for i in range(len(self.ewm_rows)):
+            self.txt_ewm.append(f"Selection {i + 1}")
+            self.txt_ewm.append(f"Rows: {[row + 1 for row in self.ewm_rows[i]]}")
+            self.txt_ewm.append(f"Chance: {self.ewm_chances[i]*100}%")
+            self.txt_ewm.append(f"Weights for selection {i + 1}: {results[i]:.2f}")
+
+        for column in range(self.tree_model.columnCount()):
+            for row in self.ewm_rows[-1]:
+                self.tree_model.item(row, column).setBackground(QColor("#444444"))
+
+        return results
+
+    def ewm_add_another(self):
+        for qle in (self.qle_selection, self.qle_chance):
+            if not qle.text():
+                qle.setFocus()
+                QMessageBox.critical(self, 'Error', 'Empty entry')
+                return
+
+        try:
+            selection = [int(row.strip()) - 1 for row in self.qle_selection.text().split(',')]
+        except ValueError:
+            QMessageBox.critical(self, 'Error', f'Selection entry must have only comma separated numbers')
+            return
+
+        for row in selection:
+            if row in self.ewm_all_rows:
+                self.qle_selection.setFocus()
+                QMessageBox.critical(self, 'Error', f'Row No. {row + 1} is already selected')
+                return
+            if self.tree_model.item(row, 3).text() == '0':
+                QMessageBox.critical(self, 'Error', f'Row No. {row + 1} is not enabled. You should change "On/Off" to 1 first')
+                return
+
+        try:
+            chance = float(self.qle_chance.text())
+        except ValueError:
+            QMessageBox.critical(self, 'Error', f'Chance entry must be a number')
+            return
+
+        if not (0 < chance < 1):
+            QMessageBox.critical(self, 'Error', f'Chance must be between 0 and 1')
+            return
+        
+        self.ewm_chances.append(chance)
+        sum_chance = sum(self.ewm_chances)
+
+        if sum_chance > 1:
+            QMessageBox.critical(self, 'Error', f'Sum of all chances must not be over 1')
+            del self.ewm_chances[-1]
+            return
+
+        self.ewm_all_rows.extend(selection)
+        self.ewm_rows.append(selection)
+        self.qle_selection.setText('')
+        self.qle_chance.setText('')
+
+        self.ewm_calc(sum_chance)
+
+    def ewm_find_weights(self):
+        if not self.ewm_all_rows:
+            for qle in (self.qle_selection, self.qle_chance):
+                if not qle.text():
+                    qle.setFocus()
+                    QMessageBox.critical(self, 'Error', 'Empty entry')
+                    return
+
+        if self.qle_selection.text() and self.qle_chance.text():
+            try:
+                selection = [int(row.strip()) - 1 for row in self.qle_selection.text().split(',')]
+            except ValueError:
+                QMessageBox.critical(self, 'Error', f'Selection entry must have only comma separated numbers')
+                return
+
+            try:
+                chance = float(self.qle_chance.text())
+            except ValueError:
+                QMessageBox.critical(self, 'Error', f'Chance entry must be a number')
+                return
+
+            if not (0 < chance < 1):
+                QMessageBox.critical(self, 'Error', f'Chance must be between 0 and 1')
+                return
+
+            self.ewm_chances.append(chance)
+            self.ewm_all_rows.extend(selection)
+            self.ewm_rows.append(selection)
+
+        sum_chance = sum(self.ewm_chances)
+
+        if sum_chance > 1:
+            QMessageBox.critical(self, 'Error', f'Sum of all chances must not be over 1')
+            del self.ewm_chances[-1]
+            return
+
+        results = self.ewm_calc(sum_chance)
+
+        if QMessageBox.question(self, 'Apply', 'Apply the weights?') != QMessageBox.Yes:
+            return
+
+        update_row_pos()
+        conn = sqlite3.connect(tasks_db)
+        c = conn.cursor()
+        for i in range(len(self.ewm_rows)):
+            selection_rowids = [self.tree_model.item(row, 0).data(Qt.ItemDataRole.UserRole) for row in self.ewm_rows[i]]
+            command = "UPDATE tasks SET weight = :weight WHERE rowid = :rowid"
+            for rowid in selection_rowids:
+                c.execute(command, 
+                            {
+                                'weight': max(round(results[i]), 1),
+                                'rowid': rowid
+                            })
+            command = f"SELECT * FROM tasks WHERE rowid in ({', '.join('?' for _ in selection_rowids)})"
+            c.execute(command, selection_rowids)
+            for task in c.fetchall():
+                self.tree_model.item(task[0] - 1, 2).setText(str(task[2]))
+        conn.commit()
+        conn.close()
+
+        self.show_hide_ewm()
+
+    def select_all(self):
+        if self.tree.isVisible():
+            tree = self.tree
+        elif self.tree_completed.isVisible():
+            tree = self.tree_completed
+        else:
+            return
+
+        selection_model = tree.selectionModel()
+
+        for row in range(tree.model().rowCount()):
+            index = tree.model().index(row, 0)
+
+            if not selection_model.isSelected(index):
+                selection_model.select(
+                    index,
+                    QItemSelectionModel.SelectionFlag.Select |
+                    QItemSelectionModel.SelectionFlag.Rows
+                )
+
+    def clear_entries(self):
+        self.qle_name.setText('')
+        self.qle_wgt.setText('')
+        self.qle_onoff.setText('')
+        self.qle_routput.setText('')
+
+    def select_task(self):
+        values = [
+            self.tree_model.item(
+                self.active_task,
+                column
+            ).text()
+            for column in range(self.tree_model.columnCount())
+        ]
+
+        qles = [self.qle_name, self.qle_wgt, self.qle_onoff, self.qle_routput]
+        for n, entry in enumerate(qles):
+            if self.focused and entry in self.focused and qles[n].text() != self.tree_model.item(self.active_task, n + 1).text():
+                continue
+            else:
+                qles[n].setText(values[n + 1])
+                if n in (0, 3):
+                    qles[n].setCursorPosition(0)
+
+    def escape(self):
+        if self.tree.isVisible():
+            tree = self.tree
+            proxy = self.proxy
+        elif self.tree_completed.isVisible():
+            tree = self.tree_completed
+            proxy = self.proxy_completed
+        else:
+            return
+
+        proxy_indexes = tree.selectionModel().selectedRows()
+        selection = [proxy.mapToSource(pindex) for pindex in proxy_indexes]
+        for index in selection:
+            tree.selectionModel().select(
+                index,
+                QItemSelectionModel.SelectionFlag.Deselect |
+                QItemSelectionModel.SelectionFlag.Rows
+            )
+
+    def click_press(self, pindex):
+        index = self.proxy.mapToSource(pindex)
+        if index.row() != -1:
+            self.active_task = index.row()
+
+    def click_release(self):
+        if self.doubleClicked:
+            self.doubleClicked = False
+            return
+        if self.active_task is not None:
+            self.select_task()
+            if self.frame_ewm.isVisible():
+                self.qle_selection.setText(", ".join([str(self.proxy.mapToSource(pindex).row() + 1) for pindex in self.tree.selectionModel().selectedRows()]))
+        else:
+            self.escape()
+
+    def randomizer_check(self, target, mode):
+        if not target:
+            return default_rizer
+        
+        reg = list(re.finditer(patterns[3], target))
+        if not reg:
+            if mode in (1, 2):
+                self.qle_routput.setFocus()
+                QMessageBox.warning(self, 'Error', f"Unable to read randomizer input.\n{expl[3]}"
+                    + ("\nUsing default instead" if mode == 1 else "")
+                )
+            return default_rizer if mode in (1, 3) else None
+
+        rizer = []
+        for repet in reg:
+            if repet.group("num_lo"):
+                if int(repet.group("num_lo")) > int(repet.group("num_hi")):
+                    self.txt_main.append(f"Skipped: {repet.group('match')}. Try: {repet.group('name')} ([{repet.group('num_hi')}-{repet.group('num_lo')}])")
+                    continue
+                rizer.append(f"{repet.group("name")} [{repet.group("num_lo")}-{repet.group("num_hi")}]")
+            elif repet.group("str_lo"):
+                if addup(repet.group("str_lo")) > addup(repet.group("str_hi")):
+                    self.txt_main.append(f"Skipped: {repet.group('match')}. Try: {repet.group('name')} ([{repet.group('str_hi')}-{repet.group('str_lo')}])")
+                    continue
+                rizer.append(f"{repet.group("name")} [{repet.group("str_lo")}-{repet.group("str_hi")}]")
+            else:
+                reg2 = list(re.finditer(pattern_sample, repet.group("choices")))
+                rizer.append(
+                    f"{repet.group("name")} [{', '.join([f'{repet2.group("name")}/{repet2.group("weight")}' if repet2.group("weight") else repet2.group("name") for repet2 in reg2])}]")
+        rizer = ', '.join(rizer)
+        if mode == (1,) or mode == (2,):
+            self.qle_routput.setText(rizer)
+        return rizer
+
+    def export_tasks(self, tree):
+        fname, _ = QFileDialog.getSaveFileName(w, 'Save File', str(data_dir), filter='Text Files (*.txt)')
+        if not fname:
+            return
+        
+        if not fname.lower().endswith('.txt'):
+            fname += '.txt'
+
+        with open(fname, 'w', encoding='utf-8') as f:
+            model = tree.model().sourceModel()
+            row_items_list = [
+                [
+                    model.item(row, column)
+                    for column in range(model.columnCount())
+                ]
+                for row in range(model.rowCount())
+            ]
+
+            row_items_list.sort(key=lambda row_items: int(row_items[0].text()))
+
+            if tree == self.tree:
+                for row_items in row_items_list:
+                    f.write(", ".join([item.text() for item in row_items]))
+                    f.write('\n')
+            elif tree == self.tree_completed:
+                for row_items in row_items_list:
+                    f.write(f"{row_items[0].data(Qt.ItemDataRole.UserRole)}, ")
+                    f.write(", ".join([item.text() for item in row_items[1:3]]))
+                    f.write(f", [{row_items[3].text()}]")
+                    if row_items[5]:
+                        f.write(f", {row_items[5].data(Qt.ItemDataRole.UserRole).isoformat()}")
+                    f.write(f", {row_items[6].text()}")
+                    f.write('\n')
+
+                if (Path(notes_url).is_dir() and any(notes_url.iterdir())
+                    and QMessageBox.question(self, 'Backup Notes?', 'Do you also want to export the Notes folder?') == QMessageBox.Yes):
+                    folder = QFileDialog.getExistingDirectory(self, "Select where to save", str(data_dir))
+
+                    if folder:
+                        destination = Path(folder) / notes_url.name
+                        shutil.copytree(notes_url, destination, dirs_exist_ok=True)
+                    
+
+    def import_tasks(self, db):
+        if db == 'completed.db':
+            dialog = QDialog(self)
+            dialog.setWindowTitle("Import menu")
+            layout = QVBoxLayout(dialog)
+
+            frame_up = QFrame(dialog)
+            frame_down = QFrame(dialog)
+            layout.addWidget(frame_up)
+            layout.addWidget(frame_down)
+
+            layout_up = QGridLayout(frame_up)
+            layout_down = QHBoxLayout(frame_down)
+
+            lbl_file = QLabel("Select file ")
+            bt_file = QPushButton("Select")
+            layout_up.addWidget(lbl_file, 0, 0)
+            layout_up.addWidget(bt_file, 0, 1)
+
+            lbl_notes = QLabel("Select 'Notes' folder (optional) ")
+            bt_notes = QPushButton("Select")
+            layout_up.addWidget(lbl_notes, 1, 0)
+            layout_up.addWidget(bt_notes, 1, 1)
+
+            bt_cancel = QPushButton("Cancel")
+            bt_ok = QPushButton("OK")
+            layout_down.addWidget(bt_cancel)
+            layout_down.addWidget(bt_ok)
+
+            fname = ""
+            notes_import = None
+
+            def select_file():
+                nonlocal fname
+
+                selected, _ = QFileDialog.getOpenFileName(self, 'Select file', str(data_dir))
+
+                if selected:
+                    fname = selected
+                    bt_file.setText('File selected')
+
+            def select_notes():
+                nonlocal notes_import
+
+                folder = QFileDialog.getExistingDirectory(self, "Select 'Notes' Folder", str(data_dir))
+
+                if folder:
+                    notes_import = Path(folder)
+                    bt_notes.setText('Folder selected')
+
+            bt_file.clicked.connect(select_file)
+            bt_notes.clicked.connect(select_notes)
+
+            bt_cancel.clicked.connect(dialog.reject)
+            bt_ok.clicked.connect(dialog.accept)
+
+            dialog.adjustSize()
+
+            if dialog.exec() == QDialog.DialogCode.Rejected:
+                return
+        else:
+            fname, _ = QFileDialog.getOpenFileName(self, 'Open File', str(data_dir), filter='Text Files (*.txt)')
+
+        if fname:
+            try:
+                with open(fname, 'r', encoding='utf-8') as f:
+                    conn = sqlite3.connect(db)
+                    c = conn.cursor()
+                    c.execute('SELECT * FROM tasks')
+                    rows = c.fetchall()
+                    lines = f.readlines()
+                    if db == tasks_db:
+                        row_items_list = []
+                        cnames = [row[1] for row in rows]
+                        for line in lines:
+                            reg = re.match(pattern_import_tasks, line)
+                            if reg and reg.group('name') not in cnames:
+                                row_pos = reg.group('row_pos')
+                                if row_pos is None or int(row_pos) <= self.tree_model.rowCount():
+                                    row_pos = self.tree_model.rowCount() + 1
+                                name = reg.group('name')
+                                if reg.group('options'):
+                                    weight = reg.group('weight')
+                                    onoff = reg.group('onoff')
+                                else:
+                                    weight = '1'
+                                    onoff = '1'
+                                rizer = self.randomizer_check(reg.group('rizer'), 3)
+                                c.execute('INSERT INTO tasks VALUES (:row_pos, :name, :weight, :onoff, :randomizer)',
+                                          {
+                                              'row_pos': row_pos,
+                                              'name': name,
+                                              'weight': weight,
+                                              'onoff': onoff,
+                                              'randomizer': rizer
+                                          })
+                                row_items = [
+                                    QStandardItem(row_pos),
+                                    QStandardItem(name),
+                                    QStandardItem(weight),
+                                    QStandardItem(onoff),
+                                    QStandardItem(rizer),
+                                ]
+                                row_items[0].setData(c.lastrowid, Qt.ItemDataRole.UserRole)
+                                row_items[0].setData(int(row_pos), Qt.ItemDataRole.UserRole + 1)
+                                row_items[2].setTextAlignment(Qt.AlignCenter)
+                                row_items[3].setTextAlignment(Qt.AlignCenter)
+                                row_items_list.append(row_items)
+                                cnames.append(name)
+                        if row_items_list:
+                            row_items_list.sort(key=lambda row_items: int(row_items[0].text()))
+                            for row_items in row_items_list:
+                                self.tree_model.appendRow(row_items)
+                    elif db == completed_db:
+                        ctasks = [row[1] for row in rows]
+                        for line in lines:
+                            reg = re.match(pattern_import_ctasks, line)
+                            if reg and reg.group('task') not in ctasks:
+                                sql_ID = reg.group('sql_ID')  # for matching the Notes folder
+                                name = reg.group('name')
+                                task = reg.group('task')
+                                keywords = reg.group('keywords')
+                                datetime_iso = reg.group('datetime')
+                                if datetime_iso:
+                                    datetime_obj = datetime.fromisoformat(datetime_iso)
+                                    datetime_strf = datetime_obj.strftime("%Y-%m-%d")
+                                else:
+                                    datetime_obj = None
+                                    datetime_strf = None
+                                completitions = reg.group('completitions')
+                                self.total_score += completitions
+                                c.execute('''INSERT INTO tasks VALUES (:name,
+                                                                       :task,
+                                                                       :keywords,
+                                                                       :folder_url,
+                                                                       :datetime,
+                                                                       :completitions)
+                                          ''',
+                                          {
+                                              'name': name,
+                                              'task': task,
+                                              'keywords': keywords,
+                                              'folder_url': None,
+                                              'datetime': datetime_iso,
+                                              'completitions': completitions
+                                          })
+
+                                rowid = c.lastrowid
+                                folder_url = notes_url / f'{rowid}'
+
+                                c.execute('''
+                                    UPDATE tasks
+                                    SET folder_url = :folder_url
+                                    WHERE rowid = :rowid
+                                ''', {
+                                    'folder_url': str(folder_url),
+                                    'rowid': rowid
+                                })
+
+                                if notes_import:
+                                    folder_url.mkdir(exist_ok=True)
+                                    for file in (notes_import / sql_ID).iterdir():
+                                        shutil.copy2(file, folder_url)
+
+                                row_items = [
+                                    QStandardItem(str(self.tree_model_completed.rowCount() + 1)),
+                                    QStandardItem(name),
+                                    QStandardItem(task),
+                                    QStandardItem(keywords),
+                                    QStandardItem(''),
+                                    QStandardItem(datetime_strf),
+                                    QStandardItem(completitions),
+                                ]
+                                row_items[0].setData(rowid, Qt.ItemDataRole.UserRole)
+                                row_items[0].setData(self.tree_model_completed.rowCount() + 1, Qt.ItemDataRole.UserRole + 1)
+                                row_items[2].setData(f"{name}, {task}", Qt.ItemDataRole.UserRole)
+                                row_items[4].setData(str(folder_url), Qt.ItemDataRole.UserRole)
+                                row_items[5].setData(datetime_obj, Qt.ItemDataRole.UserRole)
+                                row_items[6].setTextAlignment(Qt.AlignCenter)
+                                self.tree_model_completed.appendRow(row_items)
+                                ctasks.append(task)
+                        self.lbl_score_all.setText('Completed: ' + str(self.total_score))
+                    conn.commit()
+                    conn.close()
+            except FileNotFoundError:
+                QMessageBox.critical(self, 'Error', f"{fname} file not found")
+
+    def network(self):
+        if __name__ == '__main__':
+            self.close()
+            QApplication.quit()
+        else:
+            self.close()
+
+
+if __name__ == '__main__':
+    app = QApplication(sys.argv)
+    app.aboutToQuit.connect(update_row_pos)
+    w = NextTask()
+    w.showMaximized()
+    sys.exit(app.exec())
