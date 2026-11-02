@@ -255,6 +255,31 @@ def focus_lbl(_, lbl):
         w.focused.remove(entry)
 
 
+def open_files(parent=None, filter=None):
+    # Prefer the URL-based versions on Android
+    urls, _ = QFileDialog.getOpenFileUrls(
+        parent,
+        "Select Files",
+        QUrl(),                     # start location (empty = system default)
+        "All Files (*);;Text Files (*.txt)",
+        filter=filter,
+        options=QFileDialog.Option.DontUseNativeDialog  # only if you force the Qt dialog
+    )
+
+    paths = []
+    for url in urls:
+        if url.isLocalFile():
+            paths.append(url.toLocalFile())          # real filesystem path
+        else:
+            paths.append(url.toString())             # content:// URI  ← this is what you get most of the time
+        
+        if len(paths) == 1:
+            return paths[0]
+        else:
+            return paths
+        # You can open it with QFile / pathlib / shutil later
+
+
 class ErrorRedirector(QObject):
     text_written = Signal(str)
 
@@ -826,7 +851,7 @@ class NextTask(QMainWindow):
                 def store_files():
                     nonlocal fnames
 
-                    selected, _ = QFileDialog.getOpenFileNames(self, 'Select Files', str(data_dir))
+                    selected, _ = open_files(self)
 
                     if selected:
                         fnames = selected
@@ -1300,7 +1325,7 @@ class NextTask(QMainWindow):
                 def store_files():
                     nonlocal fnames
 
-                    selected, _ = QFileDialog.getOpenFileNames(self, 'Select Files', str(data_dir))
+                    selected, _ = open_files(self)
 
                     if selected:
                         fnames = selected
@@ -1799,7 +1824,7 @@ class NextTask(QMainWindow):
             def select_file():
                 nonlocal fname
 
-                selected, _ = QFileDialog.getOpenFileName(self, 'Select file', str(data_dir))
+                selected, _ = open_files(self)
 
                 if selected:
                     fname = selected
@@ -1825,7 +1850,7 @@ class NextTask(QMainWindow):
             if dialog.exec() == QDialog.DialogCode.Rejected:
                 return
         else:
-            fname, _ = QFileDialog.getOpenFileName(self, 'Open File', str(data_dir), filter='Text Files (*.txt)')
+            fname, _ = open_files(self, filter='Text Files (*.txt)')
 
         if fname:
             try:
