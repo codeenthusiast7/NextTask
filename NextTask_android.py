@@ -264,7 +264,7 @@ def open_files(parent=None, filter=None):
     )
 
     if urls:
-        handle_urls(urls)
+        return handle_urls(urls)
 
 
 def save_file(parent=None, filter=None):
@@ -279,7 +279,7 @@ def save_file(parent=None, filter=None):
     )
 
     if not url.isEmpty():
-        handle_urls([url])
+        return handle_urls([url])
 
 
 def select_directory(parent=None, caption="Select directory"):
@@ -293,7 +293,7 @@ def select_directory(parent=None, caption="Select directory"):
     )
 
     if not url.isEmpty():
-        handle_urls([url]
+        return handle_urls([url])
 
 
 def handle_urls(urls):
