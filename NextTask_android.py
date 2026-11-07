@@ -18,11 +18,24 @@ from math import lcm
 import resources_rc
 import csv
 
-data_dir = Path(
-    QStandardPaths.writableLocation(
-        QStandardPaths.StandardLocation.AppLocalDataLocation
+if QSysInfo.productType() == "windows":
+    default_fg = "SystemButtonText"
+else:
+    default_fg = "#000000"
+inactive_fg = "#505050"
+
+if QSysInfo.productType() != "android":
+    data_dir = Path(
+        QStandardPaths.writableLocation(
+            QStandardPaths.StandardLocation.AppLocalDataLocation
+        )
+    ) / "NextTask"
+else:
+    data_dir = Path(
+        QStandardPaths.writableLocation(
+            QStandardPaths.StandardLocation.AppLocalDataLocation
+        )
     )
-) / "NextTask"
 
 data_dir.mkdir(parents=True, exist_ok=True)
 
@@ -33,13 +46,6 @@ tasks_db = data_dir / "tasks.db"
 completed_db = data_dir / "completed.db"
 
 icon_folder_dir = ":/resources/icons/folder.svg"
-
-if QSysInfo.productType() == "windows":
-    default_fg = "SystemButtonText"
-else:
-    default_fg = "#000000"
-
-inactive_fg = "#505050"
 
 default_rizer = "Random [1-1000]"
 
