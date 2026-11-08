@@ -12,7 +12,9 @@ import android.provider.DocumentsContract;
 import android.provider.OpenableColumns;
 
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.io.FileOutputStream;
 import java.util.ArrayList;
 import java.util.concurrent.ExecutorService;
@@ -30,7 +32,6 @@ public class NextTaskActivity extends PythonActivity {
     private static final int REQUEST_SAVE_FILE = 4103;
 
     private static String pendingResult = null;
-    private static String pendingSavePath = null;
 
     private static final ExecutorService executor =
             Executors.newSingleThreadExecutor();
@@ -41,17 +42,16 @@ public class NextTaskActivity extends PythonActivity {
         instance = this;
     }
 
-    public static void launchFiles() {
+    public static void launchFiles(String mimeType) {
         if (instance == null) return;
 
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
         intent.addCategory(Intent.CATEGORY_OPENABLE);
-        intent.setType("*/*");
+        intent.setType(mimeType);
         intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
 
         intent.addFlags(
-            Intent.FLAG_GRANT_READ_URI_PERMISSION |
-            Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
+            Intent.FLAG_GRANT_READ_URI_PERMISSION
         );
 
         instance.startActivityForResult(intent, REQUEST_FILES);
@@ -64,8 +64,7 @@ public class NextTaskActivity extends PythonActivity {
 
         intent.addFlags(
             Intent.FLAG_GRANT_READ_URI_PERMISSION |
-            Intent.FLAG_GRANT_WRITE_URI_PERMISSION |
-            Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
+            Intent.FLAG_GRANT_WRITE_URI_PERMISSION
         );
 
         instance.startActivityForResult(intent, REQUEST_FOLDER);
@@ -81,8 +80,7 @@ public class NextTaskActivity extends PythonActivity {
 
         intent.addFlags(
             Intent.FLAG_GRANT_READ_URI_PERMISSION |
-            Intent.FLAG_GRANT_WRITE_URI_PERMISSION |
-            Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
+            Intent.FLAG_GRANT_WRITE_URI_PERMISSION
         );
 
         instance.startActivityForResult(intent, REQUEST_SAVE_FILE);
@@ -97,7 +95,8 @@ public class NextTaskActivity extends PythonActivity {
         super.onActivityResult(requestCode, resultCode, data);
 
         if (requestCode != REQUEST_FILES &&
-            requestCode != REQUEST_FOLDER) {
+            requestCode != REQUEST_FOLDER &&
+            requestCode != REQUEST_SAVE_FILE) {
             return;
         }
 
@@ -107,11 +106,6 @@ public class NextTaskActivity extends PythonActivity {
         }
 
         if (requestCode == REQUEST_SAVE_FILE) {
-            if (resultCode != RESULT_OK || data == null) {
-                setResult("{\"ok\":false,\"cancelled\":true}");
-                return;
-            }
-
             Uri uri = data.getData();
 
             JSONObject result = new JSONObject();
@@ -129,8 +123,10 @@ public class NextTaskActivity extends PythonActivity {
             try {
                 if (requestCode == REQUEST_FILES) {
                     processFiles(activity, resultIntent);
-                } else {
+
+                } else if (requestCode == REQUEST_FOLDER) {
                     processFolder(activity, resultIntent);
+
                 }
             } catch (Exception e) {
                 setError(e.toString());
@@ -324,6 +320,34 @@ public class NextTaskActivity extends PythonActivity {
         result.put("path", outputDir.getAbsolutePath());
 
         setResult(result.toString());
+    }
+
+    public static void writeToUri(
+            String uriString,
+            String base64Data) throws Exception {
+
+        if (instance == null) {
+            throw new Exception("Activity unavailable");
+        }
+
+        Uri uri = Uri.parse(uriString);
+
+        byte[] data = android.util.Base64.decode(
+            base64Data,
+            android.util.Base64.DEFAULT
+        );
+
+        try (
+            java.io.OutputStream output =
+                instance.getContentResolver().openOutputStream(uri, "w")
+        ) {
+            if (output == null) {
+                throw new Exception("Cannot open destination");
+            }
+
+            output.write(data);
+            output.flush();
+        }
     }
 
     private static void copyDirectory(
