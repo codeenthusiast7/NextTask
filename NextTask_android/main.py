@@ -11,7 +11,7 @@ from PySide6.QtGui import (
 )
 from PySide6.QtCore import (
     Qt, QItemSelectionModel, QSortFilterProxyModel, QObject, Signal, QSettings, 
-    QStandardPaths, QUrl, QSysInfo, QFile, QIODevice
+    QStandardPaths, QUrl, QFile, QIODevice, QTimer
 )
 import sys
 import sqlite3
@@ -19,30 +19,32 @@ import random
 import re
 from string import ascii_lowercase
 from datetime import datetime
-import shutil
 from fractions import Fraction
 from math import lcm
 import resources_rc
 import csv
+import json
+from jnius import autoclass
+import base64
+import io
 
-if QSysInfo.productType() == "windows":
-    default_fg = "SystemButtonText"
-else:
-    default_fg = "#000000"
+mime_types = {
+    "txt": "text/plain",
+    "csv": "text/csv",
+    "json": "application/json",
+    "pdf": "application/pdf",
+    "zip": "application/zip",
+    "all": "*/*",
+}
+
+default_fg = "#000000"
 inactive_fg = "#505050"
 
-if QSysInfo.productType() != "android":
-    data_dir = Path(
-        QStandardPaths.writableLocation(
-            QStandardPaths.StandardLocation.AppLocalDataLocation
-        )
-    ) / "NextTask"
-else:
-    data_dir = Path(
-        QStandardPaths.writableLocation(
-            QStandardPaths.StandardLocation.AppLocalDataLocation
-        )
+data_dir = Path(
+    QStandardPaths.writableLocation(
+        QStandardPaths.StandardLocation.AppLocalDataLocation
     )
+)
 
 data_dir.mkdir(parents=True, exist_ok=True)
 
@@ -129,6 +131,44 @@ bt_style_tabs = """
 
 settings = QSettings("NextTask", "NextTask")
 
+
+def copy_file(source, destination):
+    source = Path(source)
+    destination = Path(destination)
+
+    if destination.is_dir():
+        destination = destination / source.name
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
+
+    with source.open("rb") as src:
+        with destination.open("wb") as dst:
+            while chunk := src.read(1024 * 1024):
+                dst.write(chunk)
+
+    return destination
+
+
+def copy_directory(source, destination):
+    source = Path(source)
+    destination = Path(destination)
+
+    if not source.is_dir():
+        raise NotADirectoryError(source)
+
+    destination.mkdir(parents=True, exist_ok=True)
+
+    for item in source.iterdir():
+        target = destination / item.name
+
+        if item.is_dir():
+            copy_directory(item, target)
+        elif item.is_file():
+            copy_file(item, target)
+
+    return destination
+
+
 def update_row_pos():
     if w.movedRows:
         conn = sqlite3.connect(tasks_db)
@@ -205,58 +245,119 @@ def focus_lbl(_, lbl):
         w.focused.remove(entry)
 
 
-def open_files(parent=None, filter=None):
-    # Prefer the URL-based versions on Android
-    urls, _ = QFileDialog.getOpenFileUrls(
-        parent,
-        caption="Select Files",
-        dir=QUrl(),                     # start location (empty = system default)
-        filter=filter
-    )
+_picker_activity = autoclass(
+    "org.nexttask.nexttask.NextTaskActivity"
+)
+
+_picker_timer = None
 
 
-    if not urls:
+def _launch_android_picker(parent, method, callback, *args):
+    global _picker_timer
+
+    if _picker_timer is not None:
+        _picker_timer.stop()
+
+    _picker_activity.clearPendingResult()
+
+    timer = QTimer(parent)
+    timer.setInterval(200)
+
+    def check_result():
+        global _picker_timer
+
+        result = _picker_activity.consumePendingResult()
+
+        if result is None:
+            return
+
+        timer.stop()
+        _picker_timer = None
+
+        callback(json.loads(str(result)))
+
+    timer.timeout.connect(check_result)
+
+    _picker_timer = timer
+    timer.start()
+
+    getattr(_picker_activity, method)(*args)
+
+
+def handle_picker_result(result):
+    if not result.get("ok"):
+        if not result.get("cancelled"):
+            print("Picker error:", result.get("error"))
         return None
 
-    return handle_urls(urls)
+    if result["kind"] == "files":
+        paths = [Path(p) for p in result["paths"]]
+        return paths[0] if len(paths) == 1 else paths
+
+    if result["kind"] == "folder":
+        return Path(result["path"])
 
 
-def save_file(parent=None, filter=None):
-    # Prefer the URL-based versions on Android
-    url, _ = QFileDialog.getSaveFileUrl(
+def open_files(parent, callback, filter=None):
+    mime_type = mime_types.get(filter, "*/*")
+
+    _launch_android_picker(
         parent,
-        caption="Save File",
-        dir=QUrl(),                     # start location (empty = system default)
-        filter=filter
+        "launchFiles",
+        lambda result: callback(handle_picker_result(result)),
+        mime_type
     )
 
-    if not url.isEmpty():
-        return handle_urls([url])
 
-
-def select_directory(parent=None, caption="Select directory"):
-    # Prefer the URL-based versions on Android
-    url = QFileDialog.getExistingDirectoryUrl(
+def open_folder(parent, callback):
+    _launch_android_picker(
         parent,
-        caption=caption,
-        dir=QUrl(),                     # start location (empty = system default)
-        supportedSchemes=[]             # list of str, optional
+        "launchFolder",
+        lambda result: callback(handle_picker_result(result))
     )
 
-    if not url.isEmpty():
-        return handle_urls([url])
 
+def save_file(parent, data, callback, filter=None):
+    mime_type = mime_types.get(filter, "*/*")
 
-def handle_urls(urls):
-    paths = []
+    if isinstance(data, str):
+        data = data.encode("utf-8")
 
-    for url in urls:
-        if url.isLocalFile():
-            paths.append(url.toLocalFile())          # real filesystem path
-        else:
-            paths.append(url.toString())             # content:// URI  ← this is what you get most of the time
-    
-    return paths[0] if len(paths) == 1 else paths
+    if not isinstance(data, bytes):
+        raise TypeError("data must be str or bytes")
+
+    def handle_result(result):
+        if not result.get("ok"):
+            callback(result)
+            return
+
+        try:
+            encoded = base64.b64encode(data).decode("ascii")
+
+            _picker_activity.writeToUri(
+                result["url"],
+                encoded
+            )
+
+            callback({
+                "ok": True,
+                "saved": True,
+                "url": result["url"]
+            })
+
+        except Exception as e:
+            callback({
+                "ok": False,
+                "saved": False,
+                "error": str(e)
+            })
+
+    _launch_android_picker(
+        parent,
+        "launchSaveFile",
+        handle_result,
+        mime_type
+    )
 
 
 class ErrorRedirector(QObject):
@@ -359,32 +460,26 @@ class NextTask(QMainWindow):
         main_layout.setSpacing(0)
 
         # Menu
-        if QSysInfo.productType() == "android":
-            self.create_mobile_menu()
-        else:
-            self.create_desktop_menu()
+        self.create_mobile_menu()
 
-        if QSysInfo.productType() == "android":
-            # Create the scroll area
-            scroll = QScrollArea()
-            scroll.setWidgetResizable(True)
-            scroll.setVerticalScrollBarPolicy(
-                Qt.ScrollBarPolicy.ScrollBarAsNeeded
-            )
-            scroll.setHorizontalScrollBarPolicy(
-                Qt.ScrollBarPolicy.ScrollBarAsNeeded
-            )
+        # Create the scroll area
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
+        scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
 
-            # Layout for all your GUI elements
-            self.main_layout = QVBoxLayout(central)
+        # Layout for all your GUI elements
+        self.main_layout = QVBoxLayout(central)
 
-            # Put central inside scroll area
-            scroll.setWidget(central)
+        # Put central inside scroll area
+        scroll.setWidget(central)
 
-            # Set scroll area as central widget
-            self.setCentralWidget(scroll)
-        else:
-            self.setCentralWidget(central)
+        # Set scroll area as central widget
+        self.setCentralWidget(scroll)
 
         # Top bar
         top_bar_widget = QWidget()
@@ -825,16 +920,21 @@ class NextTask(QMainWindow):
                 fnames = []
 
                 def store_files():
-                    nonlocal fnames
 
-                    selected = open_files(self)
+                    def files_selected(selected):
+                        nonlocal fnames
 
-                    if selected:
-                        fnames = selected
-                        if len(selected) > 1:
-                            bt_files.setText('Files selected')
-                        else:
-                            bt_files.setText('File selected')
+                        if selected is None:
+                            return
+
+                        fnames = selected if isinstance(selected, list) else [selected]
+
+                        bt_files.setText(
+                            "Files selected" if len(fnames) > 1
+                            else "File selected"
+                        )
+
+                    open_files(self, files_selected)
 
                 bt_files.clicked.connect(store_files)
                 bt_cancel.clicked.connect(dialog.reject)
@@ -884,8 +984,7 @@ class NextTask(QMainWindow):
                 if fnames:
                     folder_url.mkdir(exist_ok=True)
                     for fname in fnames:
-                        if fname.is_file():
-                            shutil.copy2(fname, folder_url)
+                        copy_file(fname, folder_url)
 
                 row_items = [
                     QStandardItem(str(self.tree_model_completed.rowCount() + 1)),
@@ -1265,7 +1364,7 @@ class NextTask(QMainWindow):
             entry.setFocus()
             entry.selectAll()
 
-        def open_folder(index):
+        def open_notes(index):
             if not index.isValid() or index.column() != 4:
                 return
 
@@ -1300,16 +1399,21 @@ class NextTask(QMainWindow):
                 fnames = []
 
                 def store_files():
-                    nonlocal fnames
 
-                    selected = open_files(self)
+                    def files_selected(selected):
+                        nonlocal fnames
 
-                    if selected:
-                        fnames = selected
-                        if len(selected) > 1:
-                            bt_files.setText('Files selected')
-                        else:
-                            bt_files.setText('File selected')
+                        if selected is None:
+                            return
+
+                        fnames = selected if isinstance(selected, list) else [selected]
+
+                        bt_files.setText(
+                            "Files selected" if len(fnames) > 1
+                            else "File selected"
+                        )
+
+                    open_files(self, files_selected)
 
                 bt_files.clicked.connect(store_files)
                 bt_cancel.clicked.connect(dialog.reject)
@@ -1329,8 +1433,7 @@ class NextTask(QMainWindow):
 
                     folder_url.mkdir(exist_ok=True)
                     for fname in fnames:
-                        if fname.is_file():
-                            shutil.copy2(fname, folder_url)
+                        copy_file(fname, folder_url)
 
 
         # Connections
@@ -1361,7 +1464,7 @@ class NextTask(QMainWindow):
         self.qle_onoff.returnPressed.connect(update_task)
         self.qle_routput.returnPressed.connect(update_task)
         self.tree.doubleClicked.connect(double_click)
-        self.tree_completed.doubleClicked.connect(open_folder)
+        self.tree_completed.doubleClicked.connect(open_notes)
         qle_current_task.textChanged.connect(lambda text: settings.setValue("NextTask", text))
 
 
@@ -1814,49 +1917,61 @@ class NextTask(QMainWindow):
             self.qle_routput.setText(rizer)
         return rizer
 
-    def export_tasks(self, tree):
-        fname = save_file(w, filter='Text Files (*.txt)')
-        if not fname:
-            return
-        
-        if not fname.lower().endswith('.txt'):
-            fname += '.txt'
+def export_tasks(self, tree):
+    model = tree.model().sourceModel()
 
-        with open(fname, 'w', encoding='utf-8') as f:
-            model = tree.model().sourceModel()
-            row_items_list = [
-                [
-                    model.item(row, column)
-                    for column in range(model.columnCount())
-                ]
-                for row in range(model.rowCount())
+    buffer = io.StringIO(newline="")
+    writer = csv.writer(buffer)
+
+    row_items_list = [
+        [
+            model.item(row, column)
+            for column in range(model.columnCount())
+        ]
+        for row in range(model.rowCount())
+    ]
+
+    row_items_list.sort(
+        key=lambda row_items: int(row_items[0].text())
+    )
+
+    if tree == self.tree:
+        for row_items in row_items_list:
+            writer.writerow([item.text() for item in row_items])
+
+    elif tree == self.tree_completed:
+        for row_items in row_items_list:
+            row = [
+                row_items[0].data(Qt.ItemDataRole.UserRole),
+                *[item.text() for item in row_items[1:3]],
+                f"[{row_items[3].text()}]",
+                row_items[5].data(Qt.ItemDataRole.UserRole).isoformat()
+                if row_items[5].data(Qt.ItemDataRole.UserRole)
+                else "",
+                row_items[6].text()
             ]
+            writer.writerow(row)
 
-            row_items_list.sort(key=lambda row_items: int(row_items[0].text()))
+        #TODO: Add notes export functionality
 
-            writer = csv.writer(f)
+    data = buffer.getvalue()
 
-            if tree == self.tree:
-                for row_items in row_items_list:
-                    writer.writerow([item.text() for item in row_items])
-            elif tree == self.tree_completed:
-                for row_items in row_items_list:
-                    row = [
-                        row_items[0].data(Qt.ItemDataRole.UserRole),
-                        *[item.text() for item in row_items[1:3]],
-                        f"[{row_items[3].text()}]",
-                        row_items[5].data(Qt.ItemDataRole.UserRole).isoformat() if row_items[5].data(Qt.ItemDataRole.UserRole) else "",
-                        row_items[6].text()
-                    ]
-                    writer.writerow(row)
+    def export_result(result):
+        if result.get("saved"):
+            self.txt_main.append("Export completed.")
+        elif not result.get("cancelled"):
+            QMessageBox.critical(
+                self,
+                "Export error",
+                result.get("error", "Unable to save file.")
+            )
 
-                if (Path(notes_url).is_dir() and any(notes_url.iterdir())
-                    and QMessageBox.question(self, 'Backup Notes?', 'Do you also want to export the Notes folder?') == QMessageBox.Yes):
-                    folder = select_directory(self, "Select where to save")
-
-                    if folder:
-                        destination = Path(folder) / notes_url.name
-                        shutil.copytree(notes_url, destination, dirs_exist_ok=True)
+    save_file(
+        self,
+        data,
+        export_result,
+        filter="txt"
+    )
                     
 
     def import_tasks(self, db):
@@ -1893,22 +2008,30 @@ class NextTask(QMainWindow):
             fname = ""
 
             def select_file():
-                nonlocal fname
 
-                selected = open_files(self)
+                def file_selected(selected):
+                    nonlocal fname
 
-                if selected:
-                    fname = selected
-                    bt_file.setText('File selected')
+                    if selected is None:
+                        return
+
+                    fname = selected[0] if isinstance(selected, list) else selected
+                    bt_file.setText("File selected")
+
+                open_files(self, file_selected, filter="txt")
 
             def select_notes():
-                nonlocal notes_import
 
-                folder = select_directory(self, "Select 'Notes' Folder")
+                def notes_selected(folder):
+                    nonlocal notes_import
 
-                if folder:
+                    if folder is None:
+                        return
+
                     notes_import = Path(folder)
                     bt_notes.setText('Folder selected')
+
+                open_folder(self, notes_selected)
 
             bt_file.clicked.connect(select_file)
             bt_notes.clicked.connect(select_notes)
@@ -1921,7 +2044,7 @@ class NextTask(QMainWindow):
             if dialog.exec() == QDialog.DialogCode.Rejected:
                 return
         elif db == tasks_db:
-            fname = open_files(self, filter='Text Files (*.txt)')
+            fname = open_files(self, filter='txt')
         else:
             raise ValueError(f"Invalid database: {db}")
 
@@ -2059,9 +2182,7 @@ class NextTask(QMainWindow):
                                 if source_folder.exists() and any(source_folder.iterdir()):
                                     folder_url.mkdir(exist_ok=True)
 
-                                    for file in source_folder.iterdir():
-                                        if file.is_file():
-                                            shutil.copy2(file, folder_url)
+                                    copy_directory(source_folder, folder_url)
 
                             row_items = [
                                 QStandardItem(str(self.tree_model_completed.rowCount() + 1)),
