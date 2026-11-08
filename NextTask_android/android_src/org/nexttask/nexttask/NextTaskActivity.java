@@ -37,7 +37,7 @@ public class NextTaskActivity extends PythonActivity {
             Executors.newSingleThreadExecutor();
 
     @Override
-    protected void onCreate(Bundle savedInstanceState) {
+    public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         instance = this;
     }
@@ -108,11 +108,18 @@ public class NextTaskActivity extends PythonActivity {
         if (requestCode == REQUEST_SAVE_FILE) {
             Uri uri = data.getData();
 
-            JSONObject result = new JSONObject();
-            result.put("ok", true);
-            result.put("url", uri.toString());
+            try {
+                JSONObject result = new JSONObject();
+                result.put("ok", true);
+                result.put("url", uri.toString());
 
-            setResult(result.toString());
+                setResult(result.toString());
+
+            } catch (org.json.JSONException e) {
+                e.printStackTrace();
+                setResult("{\"ok\":false,\"error\":\"Failed to create JSON result\"}");
+            }
+
             return;
         }
 
