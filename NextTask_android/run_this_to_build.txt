@@ -1,0 +1,15 @@
+export JAVA_HOME=/usr/lib/jvm/java-17-openjdk
+export PATH="$JAVA_HOME/bin:$PATH"
+
+cd NextTask_android_project/
+
+pyside6-android-deploy \
+    --keep-deployment-files \
+    --name "NextTask" \
+    --wheel-pyside=/mnt/Tritos/University/codes/python/Library/android_wheels/pyside6-6.12.0-6.12.0-cp310-abi3-android_aarch64.whl \
+    --wheel-shiboken=/mnt/Tritos/University/codes/python/Library/android_wheels/shiboken6-6.12.0-6.12.0-cp310-abi3-android_aarch64.whl
+
+
+
+adb devices
+adb install -r "/mnt/Tritos/University/codes/python/Library/NextTask_android_project/NextTask-0.1-arm64-v8a-debug.apk"
