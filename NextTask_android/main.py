@@ -484,7 +484,9 @@ class NextTask(QMainWindow):
         menu.addAction("Find weights based on chance", self.show_hide_ewm)
         menu.addSeparator()
         menu.addAction("Help", lambda: QMessageBox.information(self, 'Help', helptext))
-
+        menu.addSeparator()
+        menu.addAction("Exit", self.network)
+        
         menu_button.setMenu(menu)
 
         toolbar.addWidget(menu_button)
@@ -1889,61 +1891,61 @@ class NextTask(QMainWindow):
             self.qle_routput.setText(rizer)
         return rizer
 
-def export_tasks(self, tree):
-    model = tree.model().sourceModel()
+    def export_tasks(self, tree):
+        model = tree.model().sourceModel()
 
-    buffer = io.StringIO(newline="")
-    writer = csv.writer(buffer)
+        buffer = io.StringIO(newline="")
+        writer = csv.writer(buffer)
 
-    row_items_list = [
-        [
-            model.item(row, column)
-            for column in range(model.columnCount())
-        ]
-        for row in range(model.rowCount())
-    ]
-
-    row_items_list.sort(
-        key=lambda row_items: int(row_items[0].text())
-    )
-
-    if tree == self.tree:
-        for row_items in row_items_list:
-            writer.writerow([item.text() for item in row_items])
-
-    elif tree == self.tree_completed:
-        for row_items in row_items_list:
-            row = [
-                row_items[0].data(Qt.ItemDataRole.UserRole),
-                *[item.text() for item in row_items[1:3]],
-                f"[{row_items[3].text()}]",
-                row_items[5].data(Qt.ItemDataRole.UserRole).isoformat()
-                if row_items[5].data(Qt.ItemDataRole.UserRole)
-                else "",
-                row_items[6].text()
+        row_items_list = [
+            [
+                model.item(row, column)
+                for column in range(model.columnCount())
             ]
-            writer.writerow(row)
+            for row in range(model.rowCount())
+        ]
 
-        #TODO: Add notes export functionality
+        row_items_list.sort(
+            key=lambda row_items: int(row_items[0].text())
+        )
 
-    data = buffer.getvalue()
+        if tree == self.tree:
+            for row_items in row_items_list:
+                writer.writerow([item.text() for item in row_items])
 
-    def export_result(result):
-        if result.get("saved"):
-            self.txt_main.append("Export completed.")
-        elif not result.get("cancelled"):
-            QMessageBox.critical(
-                self,
-                "Export error",
-                result.get("error", "Unable to save file.")
-            )
+        elif tree == self.tree_completed:
+            for row_items in row_items_list:
+                row = [
+                    row_items[0].data(Qt.ItemDataRole.UserRole),
+                    *[item.text() for item in row_items[1:3]],
+                    f"[{row_items[3].text()}]",
+                    row_items[5].data(Qt.ItemDataRole.UserRole).isoformat()
+                    if row_items[5].data(Qt.ItemDataRole.UserRole)
+                    else "",
+                    row_items[6].text()
+                ]
+                writer.writerow(row)
 
-    save_file(
-        self,
-        data,
-        export_result,
-        filter="txt"
-    )
+            #TODO: Add notes export functionality
+
+        data = buffer.getvalue()
+
+        def export_result(result):
+            if result.get("saved"):
+                self.txt_main.append("Export completed.")
+            elif not result.get("cancelled"):
+                QMessageBox.critical(
+                    self,
+                    "Export error",
+                    result.get("error", "Unable to save file.")
+                )
+
+        save_file(
+            self,
+            data,
+            export_result,
+            filter="txt"
+        )
                     
 
     def import_tasks(self, db):
