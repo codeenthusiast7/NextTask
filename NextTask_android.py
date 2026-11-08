@@ -1,11 +1,18 @@
 from pathlib import Path
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QDialog,
-    QPushButton, QLabel, QLineEdit, QTextEdit, QTreeView, QFileDialog,
-    QMessageBox, QSplitter, QFrame, QSizePolicy, QAbstractItemView
+    QPushButton, QLabel, QLineEdit, QTextEdit, QTreeView, QFileDialog, QScrollArea,
+    QMessageBox, QSplitter, QFrame, QSizePolicy, QAbstractItemView, QToolBar, QToolButton,
+    QMenu
 )
-from PySide6.QtGui import QFont, QColor, QTextCursor, QTextCharFormat, QStandardItemModel, QStandardItem, QIcon, QBrush, QDesktopServices
-from PySide6.QtCore import Qt, QItemSelectionModel, QSortFilterProxyModel, QObject, Signal, QSettings, QStandardPaths, QUrl, QSysInfo
+from PySide6.QtGui import (
+    QFont, QColor, QTextCursor, QTextCharFormat, QStandardItemModel,
+    QStandardItem, QIcon, QBrush, QDesktopServices
+)
+from PySide6.QtCore import (
+    Qt, QItemSelectionModel, QSortFilterProxyModel, QObject, Signal, QSettings, 
+    QStandardPaths, QUrl, QSysInfo, QFile, QIODevice
+)
 import sys
 import sqlite3
 import random
@@ -203,12 +210,15 @@ def open_files(parent=None, filter=None):
     urls, _ = QFileDialog.getOpenFileUrls(
         parent,
         caption="Select Files",
-        dir=QUrl.fromLocalFile(str(data_dir)),                     # start location (empty = system default)
+        dir=QUrl(),                     # start location (empty = system default)
         filter=filter
     )
 
-    if urls:
-        return handle_urls(urls)
+
+    if not urls:
+        return None
+
+    return handle_urls(urls)
 
 
 def save_file(parent=None, filter=None):
@@ -216,7 +226,7 @@ def save_file(parent=None, filter=None):
     url, _ = QFileDialog.getSaveFileUrl(
         parent,
         caption="Save File",
-        dir=QUrl.fromLocalFile(str(data_dir)),                     # start location (empty = system default)
+        dir=QUrl(),                     # start location (empty = system default)
         filter=filter
     )
 
@@ -229,7 +239,7 @@ def select_directory(parent=None, caption="Select directory"):
     url = QFileDialog.getExistingDirectoryUrl(
         parent,
         caption=caption,
-        dir=QUrl.fromLocalFile(str(data_dir)),                     # start location (empty = system default)
+        dir=QUrl(),                     # start location (empty = system default)
         supportedSchemes=[]             # list of str, optional
     )
 
@@ -239,16 +249,14 @@ def select_directory(parent=None, caption="Select directory"):
 
 def handle_urls(urls):
     paths = []
+
     for url in urls:
         if url.isLocalFile():
             paths.append(url.toLocalFile())          # real filesystem path
         else:
             paths.append(url.toString())             # content:// URI  ← this is what you get most of the time
-    if len(paths) == 1:
-        return paths[0]
-    else:
-        return paths
-    # You can open it with QFile / pathlib / shutil later
+    
+    return paths[0] if len(paths) == 1 else paths
 
 
 class ErrorRedirector(QObject):
@@ -345,41 +353,38 @@ class NextTask(QMainWindow):
         self.ewm_all_rows = []
 
         central = QWidget()
-        self.setCentralWidget(central)
 
         main_layout = QVBoxLayout(central)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
 
         # Menu
-        menubar = self.menuBar()
-        file_menu = menubar.addMenu('File')
+        if QSysInfo.productType() == "android":
+            self.create_mobile_menu()
+        else:
+            self.create_desktop_menu()
 
-        import_tasks_action = file_menu.addAction('Import tasks')
-        import_tasks_action.triggered.connect(lambda: self.import_tasks(tasks_db))
+        if QSysInfo.productType() == "android":
+            # Create the scroll area
+            scroll = QScrollArea()
+            scroll.setWidgetResizable(True)
+            scroll.setVerticalScrollBarPolicy(
+                Qt.ScrollBarPolicy.ScrollBarAsNeeded
+            )
+            scroll.setHorizontalScrollBarPolicy(
+                Qt.ScrollBarPolicy.ScrollBarAsNeeded
+            )
 
-        export_tasks_action = file_menu.addAction('Export tasks')
-        export_tasks_action.triggered.connect(lambda: self.export_tasks(self.tree))
+            # Layout for all your GUI elements
+            self.main_layout = QVBoxLayout(central)
 
-        file_menu.addSeparator()
+            # Put central inside scroll area
+            scroll.setWidget(central)
 
-        import_completed_action = file_menu.addAction('Import completed tasks')
-        import_completed_action.triggered.connect(lambda: self.import_tasks(completed_db))
-
-        export_completed_action = file_menu.addAction('Export completed tasks')
-        export_completed_action.triggered.connect(lambda: self.export_tasks(self.tree_completed))
-
-        file_menu.addSeparator()
-
-        exit_action = file_menu.addAction('Exit')
-        exit_action.triggered.connect(self.network)
-
-        edit_menu = menubar.addMenu('Edit')
-        find_weights_action = edit_menu.addAction('Find weights based on chance')
-        find_weights_action.triggered.connect(self.show_hide_ewm)
-
-        help_menu = menubar.addAction('Help')
-        help_menu.triggered.connect(lambda: QMessageBox.information(self, 'Help', helptext))
+            # Set scroll area as central widget
+            self.setCentralWidget(scroll)
+        else:
+            self.setCentralWidget(central)
 
         # Top bar
         top_bar_widget = QWidget()
@@ -1444,6 +1449,96 @@ class NextTask(QMainWindow):
         self.lbl_score_all.setText(f'Completed: {self.total_score}')
         qle_current_task.setText(settings.value("NextTask", ""))
 
+
+    def create_mobile_menu(self):
+
+        toolbar = QToolBar("Main Toolbar", self)
+        toolbar.setMovable(False)
+        toolbar.setFloatable(False)
+
+        self.addToolBar(Qt.ToolBarArea.TopToolBarArea, toolbar)
+
+        menu_button = QToolButton()
+        menu_button.setText("⋮")
+        menu_button.setPopupMode(
+            QToolButton.ToolButtonPopupMode.InstantPopup
+        )
+
+        menu = QMenu(menu_button)
+
+        # Add your existing actions
+        menu.addAction("Import tasks", lambda: self.import_tasks(tasks_db))
+        menu.addAction("Export tasks", lambda: self.export_tasks(self.tree))
+        menu.addSeparator()
+        menu.addAction("Import completed tasks", lambda: self.import_tasks(completed_db))
+        menu.addAction("Export completed tasks", lambda: self.export_tasks(self.tree_completed))
+        menu.addSeparator()
+        menu.addAction("Find weights based on chance", self.show_hide_ewm)
+        menu.addSeparator()
+        menu.addAction("Help", lambda: QMessageBox.information(self, 'Help', helptext))
+        menu.addSeparator()
+        menu.addAction("Exit", self.network)
+
+        menu_button.setMenu(menu)
+
+        toolbar.addWidget(menu_button)
+
+        toolbar.setStyleSheet("""
+            QToolBar {
+                background-color: #252525;
+                border: none;
+                spacing: 10px;
+                padding: 5px;
+            }
+
+            QToolButton {
+                color: white;
+                font-size: 26px;
+                border: none;
+                padding: 5px 12px;
+            }
+
+            QToolButton::menu-indicator {
+                image: none;
+            }
+
+            QMenu {
+                background-color: #303030;
+                color: white;
+                border: 1px solid #555;
+                padding: 5px;
+            }
+
+            QMenu::item {
+                padding: 12px 25px;
+            }
+
+            QMenu::item:selected {
+                background-color: #505050;
+            }
+        """)
+
+    def create_desktop_menu(self):
+        menubar = self.menuBar()
+        file_menu = menubar.addMenu('File')
+
+        import_tasks_action = file_menu.addAction('Import tasks')
+        import_tasks_action.triggered.connect(lambda: self.import_tasks(tasks_db))
+        export_tasks_action = file_menu.addAction('Export tasks')
+        export_tasks_action.triggered.connect(lambda: self.export_tasks(self.tree))
+        file_menu.addSeparator()
+        import_completed_action = file_menu.addAction('Import completed tasks')
+        import_completed_action.triggered.connect(lambda: self.import_tasks(completed_db))
+        export_completed_action = file_menu.addAction('Export completed tasks')
+        export_completed_action.triggered.connect(lambda: self.export_tasks(self.tree_completed))
+        file_menu.addSeparator()
+        exit_action = file_menu.addAction('Exit')
+        exit_action.triggered.connect(self.network)
+        edit_menu = menubar.addMenu('Edit')
+        find_weights_action = edit_menu.addAction('Find weights based on chance')
+        find_weights_action.triggered.connect(self.show_hide_ewm)
+        help_menu = menubar.addAction('Help')
+        help_menu.triggered.connect(lambda: QMessageBox.information(self, 'Help', helptext))
 
     def show_hide_ewm(self):
         if self.txt_main.isVisible():
