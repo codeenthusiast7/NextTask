@@ -31,18 +31,11 @@ else:
     default_fg = "#000000"
 inactive_fg = "#505050"
 
-if QSysInfo.productType() != "android":
-    data_dir = Path(
-        QStandardPaths.writableLocation(
-            QStandardPaths.StandardLocation.AppLocalDataLocation
-        )
-    ) / "NextTask"
-else:
-    data_dir = Path(
-        QStandardPaths.writableLocation(
-            QStandardPaths.StandardLocation.AppLocalDataLocation
-        )
+data_dir = Path(
+    QStandardPaths.writableLocation(
+        QStandardPaths.StandardLocation.AppLocalDataLocation
     )
+) / "NextTask"
 
 data_dir.mkdir(parents=True, exist_ok=True)
 
@@ -359,32 +352,9 @@ class NextTask(QMainWindow):
         main_layout.setSpacing(0)
 
         # Menu
-        if QSysInfo.productType() == "android":
-            self.create_mobile_menu()
-        else:
-            self.create_desktop_menu()
-
-        if QSysInfo.productType() == "android":
-            # Create the scroll area
-            scroll = QScrollArea()
-            scroll.setWidgetResizable(True)
-            scroll.setVerticalScrollBarPolicy(
-                Qt.ScrollBarPolicy.ScrollBarAsNeeded
-            )
-            scroll.setHorizontalScrollBarPolicy(
-                Qt.ScrollBarPolicy.ScrollBarAsNeeded
-            )
-
-            # Layout for all your GUI elements
-            self.main_layout = QVBoxLayout(central)
-
-            # Put central inside scroll area
-            scroll.setWidget(central)
-
-            # Set scroll area as central widget
-            self.setCentralWidget(scroll)
-        else:
-            self.setCentralWidget(central)
+        self.create_desktop_menu()
+        
+        self.setCentralWidget(central)
 
         # Top bar
         top_bar_widget = QWidget()
@@ -1410,7 +1380,6 @@ class NextTask(QMainWindow):
                 row_items[2].setTextAlignment(Qt.AlignCenter)
                 row_items[3].setTextAlignment(Qt.AlignCenter)
                 self.tree_model.appendRow(row_items)
-
             conn = sqlite3.connect(completed_db)
             c = conn.cursor()
             c.execute('SELECT rowid, * FROM tasks')
@@ -2005,11 +1974,11 @@ class NextTask(QMainWindow):
                             try:
                                 task = row[2]
                                 keywords = row[3].replace("[","",1).rsplit(']', 1)[0]
-                                datetime_iso = row[4]
+                                datetime_iso = row[4].strip()
                                 try:
                                     datetime_obj = datetime.fromisoformat(datetime_iso)
                                     datetime_strf = datetime_obj.strftime("%Y-%m-%d")
-                                except:
+                                except Exception as e:
                                     datetime_obj = None
                                     datetime_strf = None
                                 try:
