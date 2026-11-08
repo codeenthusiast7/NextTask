@@ -1,11 +1,18 @@
 from pathlib import Path
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QDialog,
-    QPushButton, QLabel, QLineEdit, QTextEdit, QTreeView, QFileDialog,
-    QMessageBox, QSplitter, QFrame, QSizePolicy, QAbstractItemView
+    QPushButton, QLabel, QLineEdit, QTextEdit, QTreeView, QFileDialog, QScrollArea,
+    QMessageBox, QSplitter, QFrame, QSizePolicy, QAbstractItemView, QToolBar, QToolButton,
+    QMenu
 )
-from PySide6.QtGui import QFont, QColor, QTextCursor, QTextCharFormat, QStandardItemModel, QStandardItem, QIcon, QBrush, QDesktopServices
-from PySide6.QtCore import Qt, QItemSelectionModel, QSortFilterProxyModel, QObject, Signal, QSettings, QStandardPaths, QUrl
+from PySide6.QtGui import (
+    QFont, QColor, QTextCursor, QTextCharFormat, QStandardItemModel,
+    QStandardItem, QIcon, QBrush, QDesktopServices
+)
+from PySide6.QtCore import (
+    Qt, QItemSelectionModel, QSortFilterProxyModel, QObject, Signal, QSettings, 
+    QStandardPaths, QUrl, QSysInfo, QFile, QIODevice
+)
 import sys
 import sqlite3
 import random
@@ -16,12 +23,26 @@ import shutil
 from fractions import Fraction
 from math import lcm
 import resources_rc
+import csv
 
-data_dir = Path(
-    QStandardPaths.writableLocation(
-        QStandardPaths.StandardLocation.AppLocalDataLocation
+if QSysInfo.productType() == "windows":
+    default_fg = "SystemButtonText"
+else:
+    default_fg = "#000000"
+inactive_fg = "#505050"
+
+if QSysInfo.productType() != "android":
+    data_dir = Path(
+        QStandardPaths.writableLocation(
+            QStandardPaths.StandardLocation.AppLocalDataLocation
+        )
+    ) / "NextTask"
+else:
+    data_dir = Path(
+        QStandardPaths.writableLocation(
+            QStandardPaths.StandardLocation.AppLocalDataLocation
+        )
     )
-) / "NextTask"
 
 data_dir.mkdir(parents=True, exist_ok=True)
 
@@ -32,12 +53,6 @@ tasks_db = data_dir / "tasks.db"
 completed_db = data_dir / "completed.db"
 
 icon_folder_dir = ":/resources/icons/folder.svg"
-
-if sys.platform == "win32":
-    default_fg = "SystemButtonText"
-else:
-    default_fg = "#000000"
-inactive_fg = "#505050"
 
 default_rizer = "Random [1-1000]"
 
@@ -87,71 +102,6 @@ patterns = [r"^\s*(?P<target>[^,\s](?:[^,\n]*[^,\s])?)\s*$",
             re.VERBOSE,
             )
             ]
-
-pattern_import_tasks = re.compile(
-                        r"""
-                        (?:
-                            (?P<row_pos>\d+)
-                            \s*,\s*
-                        )?
-                        (?P<name>
-                            [^,\s]
-                            (?:[^,\n]*[^,\s])?
-                        )
-                        (?P<options>
-                            \s*,\s*
-                            (?P<weight>\d+)
-                            \s*,\s*
-                            (?P<onoff>[01])
-                            (?:
-                                \s*,\s*
-                                (?P<rizer>[^\n]+)
-                            )?
-                        )?
-                        """,
-                        re.VERBOSE,
-                       )
-pattern_import_ctasks = re.compile(
-                        r"""
-                        (?:
-                            (?P<sql_ID>\d+)
-                            \s*,\s*
-                        )?
-                        (?P<name>
-                            [^,\s]
-                            (?:[^,\n]*[^,\s])?
-                        )
-                        (?:
-                            \s*,\s*
-                            (?P<task>[^,\s]
-                                (?:[^,\n]*[^,\s])?
-                            )
-                        )?
-                        (?:
-                            \s*,\s*\[\s*
-                            (?P<keywords>
-                                [^\]\s]
-                                (?:[^\n\]]*[^\]\s])?
-                                (?:
-                                    \s*,\s*[^\]\s]
-                                    (?:[^\n\]]*[^\]\s])?
-                                )*
-                            )?
-                            \s*\]
-                        )?
-                        (?:
-                            \s*,\s*
-                            (?P<datetime>
-                                \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}
-                            )
-                        )?
-                        (?:
-                            \s*,\s*
-                            (?P<completitions>\d+)
-                        )?
-                        """,
-                        re.VERBOSE,
-                        )
 pattern_duplic_name = r"^.+\((?P<num_dupe>\d+)\)$"
 pattern_sample = r"\s*(?P<name>[^,\/\s](?:[^,\n\/]*[^,\/\s])?)\s*(?:\/\s*(?P<weight>\d+))*"
 pattern_current_task = r"(?P<full_task>(?P<name>[^,\s](?:[^,\n]*[^,\s])?)(?:\s*,\s*(?P<task>[^\n]+)*)?)"
@@ -255,6 +205,60 @@ def focus_lbl(_, lbl):
         w.focused.remove(entry)
 
 
+def open_files(parent=None, filter=None):
+    # Prefer the URL-based versions on Android
+    urls, _ = QFileDialog.getOpenFileUrls(
+        parent,
+        caption="Select Files",
+        dir=QUrl(),                     # start location (empty = system default)
+        filter=filter
+    )
+
+
+    if not urls:
+        return None
+
+    return handle_urls(urls)
+
+
+def save_file(parent=None, filter=None):
+    # Prefer the URL-based versions on Android
+    url, _ = QFileDialog.getSaveFileUrl(
+        parent,
+        caption="Save File",
+        dir=QUrl(),                     # start location (empty = system default)
+        filter=filter
+    )
+
+    if not url.isEmpty():
+        return handle_urls([url])
+
+
+def select_directory(parent=None, caption="Select directory"):
+    # Prefer the URL-based versions on Android
+    url = QFileDialog.getExistingDirectoryUrl(
+        parent,
+        caption=caption,
+        dir=QUrl(),                     # start location (empty = system default)
+        supportedSchemes=[]             # list of str, optional
+    )
+
+    if not url.isEmpty():
+        return handle_urls([url])
+
+
+def handle_urls(urls):
+    paths = []
+
+    for url in urls:
+        if url.isLocalFile():
+            paths.append(url.toLocalFile())          # real filesystem path
+        else:
+            paths.append(url.toString())             # content:// URI  ← this is what you get most of the time
+    
+    return paths[0] if len(paths) == 1 else paths
+
+
 class ErrorRedirector(QObject):
     text_written = Signal(str)
 
@@ -349,41 +353,38 @@ class NextTask(QMainWindow):
         self.ewm_all_rows = []
 
         central = QWidget()
-        self.setCentralWidget(central)
 
         main_layout = QVBoxLayout(central)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
 
         # Menu
-        menubar = self.menuBar()
-        file_menu = menubar.addMenu('File')
+        if QSysInfo.productType() == "android":
+            self.create_mobile_menu()
+        else:
+            self.create_desktop_menu()
 
-        import_tasks_action = file_menu.addAction('Import tasks')
-        import_tasks_action.triggered.connect(lambda: self.import_tasks(tasks_db))
+        if QSysInfo.productType() == "android":
+            # Create the scroll area
+            scroll = QScrollArea()
+            scroll.setWidgetResizable(True)
+            scroll.setVerticalScrollBarPolicy(
+                Qt.ScrollBarPolicy.ScrollBarAsNeeded
+            )
+            scroll.setHorizontalScrollBarPolicy(
+                Qt.ScrollBarPolicy.ScrollBarAsNeeded
+            )
 
-        export_tasks_action = file_menu.addAction('Export tasks')
-        export_tasks_action.triggered.connect(lambda: self.export_tasks(self.tree))
+            # Layout for all your GUI elements
+            self.main_layout = QVBoxLayout(central)
 
-        file_menu.addSeparator()
+            # Put central inside scroll area
+            scroll.setWidget(central)
 
-        import_completed_action = file_menu.addAction('Import completed tasks')
-        import_completed_action.triggered.connect(lambda: self.import_tasks(completed_db))
-
-        export_completed_action = file_menu.addAction('Export completed tasks')
-        export_completed_action.triggered.connect(lambda: self.export_tasks(self.tree_completed))
-
-        file_menu.addSeparator()
-
-        exit_action = file_menu.addAction('Exit')
-        exit_action.triggered.connect(self.network)
-
-        edit_menu = menubar.addMenu('Edit')
-        find_weights_action = edit_menu.addAction('Find weights based on chance')
-        find_weights_action.triggered.connect(self.show_hide_ewm)
-
-        help_menu = menubar.addAction('Help')
-        help_menu.triggered.connect(lambda: QMessageBox.information(self, 'Help', helptext))
+            # Set scroll area as central widget
+            self.setCentralWidget(scroll)
+        else:
+            self.setCentralWidget(central)
 
         # Top bar
         top_bar_widget = QWidget()
@@ -826,7 +827,7 @@ class NextTask(QMainWindow):
                 def store_files():
                     nonlocal fnames
 
-                    selected, _ = QFileDialog.getOpenFileNames(self, 'Select Files', str(data_dir))
+                    selected = open_files(self)
 
                     if selected:
                         fnames = selected
@@ -883,7 +884,8 @@ class NextTask(QMainWindow):
                 if fnames:
                     folder_url.mkdir(exist_ok=True)
                     for fname in fnames:
-                        shutil.copy2(fname, folder_url)
+                        if fname.is_file():
+                            shutil.copy2(fname, folder_url)
 
                 row_items = [
                     QStandardItem(str(self.tree_model_completed.rowCount() + 1)),
@@ -1300,7 +1302,7 @@ class NextTask(QMainWindow):
                 def store_files():
                     nonlocal fnames
 
-                    selected, _ = QFileDialog.getOpenFileNames(self, 'Select Files', str(data_dir))
+                    selected = open_files(self)
 
                     if selected:
                         fnames = selected
@@ -1327,7 +1329,8 @@ class NextTask(QMainWindow):
 
                     folder_url.mkdir(exist_ok=True)
                     for fname in fnames:
-                        shutil.copy2(fname, folder_url)
+                        if fname.is_file():
+                            shutil.copy2(fname, folder_url)
 
 
         # Connections
@@ -1446,6 +1449,96 @@ class NextTask(QMainWindow):
         self.lbl_score_all.setText(f'Completed: {self.total_score}')
         qle_current_task.setText(settings.value("NextTask", ""))
 
+
+    def create_mobile_menu(self):
+
+        toolbar = QToolBar("Main Toolbar", self)
+        toolbar.setMovable(False)
+        toolbar.setFloatable(False)
+
+        self.addToolBar(Qt.ToolBarArea.TopToolBarArea, toolbar)
+
+        menu_button = QToolButton()
+        menu_button.setText("⋮")
+        menu_button.setPopupMode(
+            QToolButton.ToolButtonPopupMode.InstantPopup
+        )
+
+        menu = QMenu(menu_button)
+
+        # Add your existing actions
+        menu.addAction("Import tasks", lambda: self.import_tasks(tasks_db))
+        menu.addAction("Export tasks", lambda: self.export_tasks(self.tree))
+        menu.addSeparator()
+        menu.addAction("Import completed tasks", lambda: self.import_tasks(completed_db))
+        menu.addAction("Export completed tasks", lambda: self.export_tasks(self.tree_completed))
+        menu.addSeparator()
+        menu.addAction("Find weights based on chance", self.show_hide_ewm)
+        menu.addSeparator()
+        menu.addAction("Help", lambda: QMessageBox.information(self, 'Help', helptext))
+        menu.addSeparator()
+        menu.addAction("Exit", self.network)
+
+        menu_button.setMenu(menu)
+
+        toolbar.addWidget(menu_button)
+
+        toolbar.setStyleSheet("""
+            QToolBar {
+                background-color: #252525;
+                border: none;
+                spacing: 10px;
+                padding: 5px;
+            }
+
+            QToolButton {
+                color: white;
+                font-size: 26px;
+                border: none;
+                padding: 5px 12px;
+            }
+
+            QToolButton::menu-indicator {
+                image: none;
+            }
+
+            QMenu {
+                background-color: #303030;
+                color: white;
+                border: 1px solid #555;
+                padding: 5px;
+            }
+
+            QMenu::item {
+                padding: 12px 25px;
+            }
+
+            QMenu::item:selected {
+                background-color: #505050;
+            }
+        """)
+
+    def create_desktop_menu(self):
+        menubar = self.menuBar()
+        file_menu = menubar.addMenu('File')
+
+        import_tasks_action = file_menu.addAction('Import tasks')
+        import_tasks_action.triggered.connect(lambda: self.import_tasks(tasks_db))
+        export_tasks_action = file_menu.addAction('Export tasks')
+        export_tasks_action.triggered.connect(lambda: self.export_tasks(self.tree))
+        file_menu.addSeparator()
+        import_completed_action = file_menu.addAction('Import completed tasks')
+        import_completed_action.triggered.connect(lambda: self.import_tasks(completed_db))
+        export_completed_action = file_menu.addAction('Export completed tasks')
+        export_completed_action.triggered.connect(lambda: self.export_tasks(self.tree_completed))
+        file_menu.addSeparator()
+        exit_action = file_menu.addAction('Exit')
+        exit_action.triggered.connect(self.network)
+        edit_menu = menubar.addMenu('Edit')
+        find_weights_action = edit_menu.addAction('Find weights based on chance')
+        find_weights_action.triggered.connect(self.show_hide_ewm)
+        help_menu = menubar.addAction('Help')
+        help_menu.triggered.connect(lambda: QMessageBox.information(self, 'Help', helptext))
 
     def show_hide_ewm(self):
         if self.txt_main.isVisible():
@@ -1722,7 +1815,7 @@ class NextTask(QMainWindow):
         return rizer
 
     def export_tasks(self, tree):
-        fname, _ = QFileDialog.getSaveFileName(w, 'Save File', str(data_dir), filter='Text Files (*.txt)')
+        fname = save_file(w, filter='Text Files (*.txt)')
         if not fname:
             return
         
@@ -1741,23 +1834,25 @@ class NextTask(QMainWindow):
 
             row_items_list.sort(key=lambda row_items: int(row_items[0].text()))
 
+            writer = csv.writer(f)
+
             if tree == self.tree:
                 for row_items in row_items_list:
-                    f.write(", ".join([item.text() for item in row_items]))
-                    f.write('\n')
+                    writer.writerow([item.text() for item in row_items])
             elif tree == self.tree_completed:
                 for row_items in row_items_list:
-                    f.write(f"{row_items[0].data(Qt.ItemDataRole.UserRole)}, ")
-                    f.write(", ".join([item.text() for item in row_items[1:3]]))
-                    f.write(f", [{row_items[3].text()}]")
-                    if row_items[5]:
-                        f.write(f", {row_items[5].data(Qt.ItemDataRole.UserRole).isoformat()}")
-                    f.write(f", {row_items[6].text()}")
-                    f.write('\n')
+                    row = [
+                        row_items[0].data(Qt.ItemDataRole.UserRole),
+                        *[item.text() for item in row_items[1:3]],
+                        f"[{row_items[3].text()}]",
+                        row_items[5].data(Qt.ItemDataRole.UserRole).isoformat() if row_items[5].data(Qt.ItemDataRole.UserRole) else "",
+                        row_items[6].text()
+                    ]
+                    writer.writerow(row)
 
                 if (Path(notes_url).is_dir() and any(notes_url.iterdir())
                     and QMessageBox.question(self, 'Backup Notes?', 'Do you also want to export the Notes folder?') == QMessageBox.Yes):
-                    folder = QFileDialog.getExistingDirectory(self, "Select where to save", str(data_dir))
+                    folder = select_directory(self, "Select where to save")
 
                     if folder:
                         destination = Path(folder) / notes_url.name
@@ -1765,7 +1860,9 @@ class NextTask(QMainWindow):
                     
 
     def import_tasks(self, db):
-        if db == 'completed.db':
+        notes_import = None
+
+        if db == completed_db:
             dialog = QDialog(self)
             dialog.setWindowTitle("Import menu")
             layout = QVBoxLayout(dialog)
@@ -1794,12 +1891,11 @@ class NextTask(QMainWindow):
             layout_down.addWidget(bt_ok)
 
             fname = ""
-            notes_import = None
 
             def select_file():
                 nonlocal fname
 
-                selected, _ = QFileDialog.getOpenFileName(self, 'Select file', str(data_dir))
+                selected = open_files(self)
 
                 if selected:
                     fname = selected
@@ -1808,7 +1904,7 @@ class NextTask(QMainWindow):
             def select_notes():
                 nonlocal notes_import
 
-                folder = QFileDialog.getExistingDirectory(self, "Select 'Notes' Folder", str(data_dir))
+                folder = select_directory(self, "Select 'Notes' Folder")
 
                 if folder:
                     notes_import = Path(folder)
@@ -1824,127 +1920,168 @@ class NextTask(QMainWindow):
 
             if dialog.exec() == QDialog.DialogCode.Rejected:
                 return
+        elif db == tasks_db:
+            fname = open_files(self, filter='Text Files (*.txt)')
         else:
-            fname, _ = QFileDialog.getOpenFileName(self, 'Open File', str(data_dir), filter='Text Files (*.txt)')
+            raise ValueError(f"Invalid database: {db}")
 
         if fname:
             try:
-                with open(fname, 'r', encoding='utf-8') as f:
+                with open(fname, 'r', newline="", encoding="utf-8-sig") as f:
                     conn = sqlite3.connect(db)
                     c = conn.cursor()
-                    c.execute('SELECT * FROM tasks')
-                    rows = c.fetchall()
-                    lines = f.readlines()
+                    reader = csv.reader(f)
+
                     if db == tasks_db:
                         row_items_list = []
-                        cnames = [row[1] for row in rows]
-                        for line in lines:
-                            reg = re.match(pattern_import_tasks, line)
-                            if reg and reg.group('name') not in cnames:
-                                row_pos = reg.group('row_pos')
-                                if row_pos is None or int(row_pos) <= self.tree_model.rowCount():
-                                    row_pos = self.tree_model.rowCount() + 1
-                                name = reg.group('name')
-                                if reg.group('options'):
-                                    weight = reg.group('weight')
-                                    onoff = reg.group('onoff')
-                                else:
-                                    weight = '1'
-                                    onoff = '1'
-                                rizer = self.randomizer_check(reg.group('rizer'), 3)
-                                c.execute('INSERT INTO tasks VALUES (:row_pos, :name, :weight, :onoff, :randomizer)',
-                                          {
-                                              'row_pos': row_pos,
-                                              'name': name,
-                                              'weight': weight,
-                                              'onoff': onoff,
-                                              'randomizer': rizer
-                                          })
-                                row_items = [
-                                    QStandardItem(row_pos),
-                                    QStandardItem(name),
-                                    QStandardItem(weight),
-                                    QStandardItem(onoff),
-                                    QStandardItem(rizer),
-                                ]
-                                row_items[0].setData(c.lastrowid, Qt.ItemDataRole.UserRole)
-                                row_items[0].setData(int(row_pos), Qt.ItemDataRole.UserRole + 1)
-                                row_items[2].setTextAlignment(Qt.AlignCenter)
-                                row_items[3].setTextAlignment(Qt.AlignCenter)
-                                row_items_list.append(row_items)
-                                cnames.append(name)
+                        c.execute('SELECT * FROM tasks')
+                        tasks = c.fetchall()
+                        names = [task[1] for task in tasks]
+                        for row in reader:
+                            if len(row) < 2:
+                                self.txt_main.append(f"Skipped: {row}. Try: [row_pos, name]")
+                                continue
+                            try:
+                                row_pos = int(row[0])
+                            except ValueError:
+                                self.txt_main.append(f"Invalid row value: {row[0]}, for row: {row}")
+                                continue
+                            name = row[1]
+                            if name in names:
+                                continue
+                            if row_pos <= self.tree_model.rowCount():
+                                row_pos = self.tree_model.rowCount() + 1
+                            try:
+                                try:
+                                    weight = int(row[2])
+                                    onoff = int(row[3])
+                                except ValueError:
+                                    self.txt_main.append(f"Invalid weight or onoff value: {row[2]}, {row[3]}, for row: {row}")
+                                    continue
+                            except IndexError:
+                                weight = 1
+                                onoff = 1
+                            rizer = self.randomizer_check(row[4], 3)
+                            c.execute('INSERT INTO tasks VALUES (:row_pos, :name, :weight, :onoff, :randomizer)',
+                                        {
+                                            'row_pos': row_pos,
+                                            'name': name,
+                                            'weight': weight,
+                                            'onoff': onoff,
+                                            'randomizer': rizer
+                                        })
+                            row_items = [
+                                QStandardItem(str(row_pos)),
+                                QStandardItem(name),
+                                QStandardItem(str(weight)),
+                                QStandardItem(str(onoff)),
+                                QStandardItem(rizer),
+                            ]
+                            row_items[0].setData(c.lastrowid, Qt.ItemDataRole.UserRole)
+                            row_items[0].setData(row_pos, Qt.ItemDataRole.UserRole + 1)
+                            row_items[2].setTextAlignment(Qt.AlignCenter)
+                            row_items[3].setTextAlignment(Qt.AlignCenter)
+                            row_items_list.append(row_items)
+                            names.append(name)
                         if row_items_list:
                             row_items_list.sort(key=lambda row_items: int(row_items[0].text()))
                             for row_items in row_items_list:
                                 self.tree_model.appendRow(row_items)
                     elif db == completed_db:
-                        ctasks = [row[1] for row in rows]
-                        for line in lines:
-                            reg = re.match(pattern_import_ctasks, line)
-                            if reg and reg.group('task') not in ctasks:
-                                sql_ID = reg.group('sql_ID')  # for matching the Notes folder
-                                name = reg.group('name')
-                                task = reg.group('task')
-                                keywords = reg.group('keywords')
-                                datetime_iso = reg.group('datetime')
-                                if datetime_iso:
+                        c.execute('SELECT rowid, * FROM tasks')
+                        ctasks = c.fetchall()
+                        ctask_ids = [ctask[0] for ctask in ctasks]
+                        ctask_names = [f"{ctask[1]}, {ctask[2]}" for ctask in ctasks]
+                        for row in reader:
+                            if len(row) < 2:
+                                self.txt_main.append(f"Skipped: {row}. Try: [row_pos, name]")
+                                continue
+                            try:
+                                sql_ID = int(row[0])  # for matching the Notes folder
+                            except ValueError:
+                                self.txt_main.append(f"Invalid sql_ID: {row[0]}, for row: {row}")
+                                continue
+                            name = row[1]
+                            try:
+                                task = row[2]
+                                keywords = row[3].replace("[","",1).rsplit(']', 1)[0]
+                                datetime_iso = row[4]
+                                try:
                                     datetime_obj = datetime.fromisoformat(datetime_iso)
                                     datetime_strf = datetime_obj.strftime("%Y-%m-%d")
-                                else:
+                                except:
                                     datetime_obj = None
                                     datetime_strf = None
-                                completitions = reg.group('completitions')
-                                self.total_score += completitions
-                                c.execute('''INSERT INTO tasks VALUES (:name,
-                                                                       :task,
-                                                                       :keywords,
-                                                                       :folder_url,
-                                                                       :datetime,
-                                                                       :completitions)
-                                          ''',
-                                          {
-                                              'name': name,
-                                              'task': task,
-                                              'keywords': keywords,
-                                              'folder_url': None,
-                                              'datetime': datetime_iso,
-                                              'completitions': completitions
-                                          })
+                                try:
+                                    completitions = int(row[5])
+                                except ValueError:
+                                    completitions = 1
+                            except IndexError:
+                                task = ""
+                                keywords = ""
+                                datetime_obj = None
+                                datetime_strf = None
+                                completitions = 1
+                            if f"{name}, {task}" in ctask_names:
+                                self.txt_main.append(f"'{name}, {task}' already completed. Checks folders with IDs {ctask_ids[ctask_names.index(f'{name}, {task}')]} (original) and {sql_ID} (imported) for differences.")
+                                continue
+                            c.execute('''INSERT INTO tasks VALUES (:name,
+                                                                    :task,
+                                                                    :keywords,
+                                                                    :folder_url,
+                                                                    :datetime,
+                                                                    :completitions)
+                                        ''',
+                                        {
+                                            'name': name,
+                                            'task': task,
+                                            'keywords': keywords,
+                                            'folder_url': None,
+                                            'datetime': datetime_iso,
+                                            'completitions': completitions
+                                        })
 
-                                rowid = c.lastrowid
-                                folder_url = notes_url / f'{rowid}'
+                            rowid = c.lastrowid
+                            folder_url = notes_url / f'{rowid}'
 
-                                c.execute('''
-                                    UPDATE tasks
-                                    SET folder_url = :folder_url
-                                    WHERE rowid = :rowid
-                                ''', {
-                                    'folder_url': str(folder_url),
-                                    'rowid': rowid
-                                })
+                            c.execute('''
+                                UPDATE tasks
+                                SET folder_url = :folder_url
+                                WHERE rowid = :rowid
+                            ''', {
+                                'folder_url': str(folder_url),
+                                'rowid': rowid
+                            })
 
-                                if notes_import:
+                            if notes_import:
+                                source_folder = notes_import / str(sql_ID)
+
+                                if source_folder.exists() and any(source_folder.iterdir()):
                                     folder_url.mkdir(exist_ok=True)
-                                    for file in (notes_import / sql_ID).iterdir():
-                                        shutil.copy2(file, folder_url)
 
-                                row_items = [
-                                    QStandardItem(str(self.tree_model_completed.rowCount() + 1)),
-                                    QStandardItem(name),
-                                    QStandardItem(task),
-                                    QStandardItem(keywords),
-                                    QStandardItem(''),
-                                    QStandardItem(datetime_strf),
-                                    QStandardItem(completitions),
-                                ]
-                                row_items[0].setData(rowid, Qt.ItemDataRole.UserRole)
-                                row_items[0].setData(self.tree_model_completed.rowCount() + 1, Qt.ItemDataRole.UserRole + 1)
-                                row_items[2].setData(f"{name}, {task}", Qt.ItemDataRole.UserRole)
-                                row_items[4].setData(str(folder_url), Qt.ItemDataRole.UserRole)
-                                row_items[5].setData(datetime_obj, Qt.ItemDataRole.UserRole)
-                                row_items[6].setTextAlignment(Qt.AlignCenter)
-                                self.tree_model_completed.appendRow(row_items)
-                                ctasks.append(task)
+                                    for file in source_folder.iterdir():
+                                        if file.is_file():
+                                            shutil.copy2(file, folder_url)
+
+                            row_items = [
+                                QStandardItem(str(self.tree_model_completed.rowCount() + 1)),
+                                QStandardItem(name),
+                                QStandardItem(task),
+                                QStandardItem(keywords),
+                                QStandardItem(''),
+                                QStandardItem(datetime_strf),
+                                QStandardItem(str(completitions)),
+                            ]
+                            row_items[0].setData(rowid, Qt.ItemDataRole.UserRole)
+                            row_items[0].setData(self.tree_model_completed.rowCount() + 1, Qt.ItemDataRole.UserRole + 1)
+                            row_items[2].setData(f"{name}, {task}", Qt.ItemDataRole.UserRole)
+                            if folder_url.exists():
+                                row_items[4].setIcon(QIcon(icon_folder_dir))
+                            row_items[4].setData(str(folder_url), Qt.ItemDataRole.UserRole)
+                            row_items[5].setData(datetime_obj, Qt.ItemDataRole.UserRole)
+                            row_items[6].setTextAlignment(Qt.AlignCenter)
+                            self.tree_model_completed.appendRow(row_items)
+                            ctask_names.append(f"{name}, {task}")
                         self.lbl_score_all.setText('Completed: ' + str(self.total_score))
                     conn.commit()
                     conn.close()
